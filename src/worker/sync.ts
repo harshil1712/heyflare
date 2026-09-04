@@ -206,12 +206,21 @@ export async function ingestParsed(env: Env, account: AccountRow, parsed: Parsed
   const db = env.DB;
   const t0 = now();
   if (!parsed.length) return { added: 0, threadIds: [] };
-  parsed.sort((a, b) => a.date - b.date);
+
+  // Skip gmailIds already in D1 so INSERT OR IGNORE no-ops don't inflate `added` (and don't touch threads/contacts).
+  const existing = await loadExistingMessageIds(
+    db,
+    account.id,
+    parsed.map((p) => p.gmailId)
+  );
+  const fresh = parsed.filter((p) => p.gmailId && !existing.has(p.gmailId));
+  if (!fresh.length) return { added: 0, threadIds: [] };
+  fresh.sort((a, b) => a.date - b.date);
 
   const myEmail = account.email.toLowerCase();
-  const threadMap = await loadThreads(db, account.id, [...new Set(parsed.map((p) => p.threadId))]);
+  const threadMap = await loadThreads(db, account.id, [...new Set(fresh.map((p) => p.threadId))]);
   const emails = new Set<string>();
-  for (const p of parsed) {
+  for (const p of fresh) {
     if (p.from.email) emails.add(p.from.email);
     for (const a of [...p.to, ...p.cc]) if (a.email) emails.add(a.email);
   }
@@ -222,7 +231,7 @@ export async function ingestParsed(env: Env, account: AccountRow, parsed: Parsed
   const touchedThreads = new Set<string>();
   let added = 0;
 
-  for (const p of parsed) {
+  for (const p of fresh) {
     const labels = p.labelIds;
     const fromMe = labels.includes("SENT") || (p.from.email !== "" && p.from.email === myEmail);
     const isTrash = labels.includes("TRASH");

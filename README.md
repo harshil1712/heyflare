@@ -202,6 +202,15 @@ npm run dev                       # vite on :5173 (proxies /api and /auth)
 ```
 Inbound mail can be simulated against the local worker: `POST http://localhost:8787/cdn-cgi/handler/email?from=a@b.co&to=you@yourdomain` with a raw RFC 822 body.
 
+### Tests
+
+Money-path tests run inside the Workers runtime via `@cloudflare/vitest-plugin` (real D1 + migrations):
+
+```sh
+npm test          # vitest run
+npm run check     # TypeScript (app + worker)
+```
+
 ## Two-factor authentication
 TOTP (Google Authenticator, 1Password, Authy…) with 10 single-use recovery codes. Settings → Security.
 

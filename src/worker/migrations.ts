@@ -17,6 +17,7 @@ import m0012 from "../../migrations/0012_calendar_default_view.sql";
 import m0013 from "../../migrations/0013_day_covers.sql";
 import m0014 from "../../migrations/0014_calendar_views.sql";
 import m0015 from "../../migrations/0015_calendar_error.sql";
+import m0016 from "../../migrations/0016_login_rate_limit.sql";
 
 export const MIGRATIONS: { name: string; sql: string }[] = [
   { name: "0001_init.sql", sql: m0001 },
@@ -34,6 +35,7 @@ export const MIGRATIONS: { name: string; sql: string }[] = [
   { name: "0013_day_covers.sql", sql: m0013 },
   { name: "0014_calendar_views.sql", sql: m0014 },
   { name: "0015_calendar_error.sql", sql: m0015 },
+  { name: "0016_login_rate_limit.sql", sql: m0016 },
 ];
 
 /** Split a migration file into statements: full-line comments dropped, split on `;` at end of line. */
@@ -50,10 +52,15 @@ export function splitStatements(sql: string): string[] {
 
 let ready: Promise<void> | null = null;
 
+/** Clear the per-isolate migration cache (needed when Vitest resets isolated D1 storage between tests). */
+export function resetMigrationCache() {
+  ready = null;
+}
+
 /** Apply pending migrations once per isolate. Cheap after the first call (a single SELECT, then cached). */
 export function ensureMigrations(env: Env): Promise<void> {
   if (!ready) {
-    ready = run(env).catch((e) => {
+    ready = runMigrations(env).catch((e) => {
       ready = null;
       throw e;
     });
@@ -61,7 +68,8 @@ export function ensureMigrations(env: Env): Promise<void> {
   return ready;
 }
 
-async function run(env: Env) {
+/** Uncached apply — used by tests so each isolate / storage snapshot gets a real schema. */
+export async function runMigrations(env: Env) {
   const db = env.DB;
   await db.batch([
     db.prepare(`CREATE TABLE IF NOT EXISTS d1_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL)`),

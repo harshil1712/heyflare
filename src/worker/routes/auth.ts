@@ -11,6 +11,32 @@ const auth = new Hono<AppEnv>();
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+const LOGIN_WINDOW_MS = 15 * 60_000;
+const LOGIN_MAX_HITS = 10;
+
+function clientIp(c: { req: { header: (n: string) => string | undefined } }): string {
+  return (c.req.header("cf-connecting-ip") || c.req.header("x-forwarded-for")?.split(",")[0]?.trim() || "unknown").slice(0, 128);
+}
+
+/** Increment a D1-backed counter; returns whether the key is still within the allowed window budget. */
+async function rateLimitHit(db: D1Database, key: string, t: number): Promise<{ allowed: boolean }> {
+  const row = await db.prepare(`SELECT hits, window_start FROM login_rate_limits WHERE key = ?`).bind(key).first<{ hits: number; window_start: number }>();
+  if (!row || t - row.window_start >= LOGIN_WINDOW_MS) {
+    await db.prepare(`INSERT INTO login_rate_limits (key, hits, window_start) VALUES (?, 1, ?) ON CONFLICT(key) DO UPDATE SET hits = 1, window_start = excluded.window_start`).bind(key, t).run();
+    return { allowed: true };
+  }
+  if (row.hits >= LOGIN_MAX_HITS) return { allowed: false };
+  await db.prepare(`UPDATE login_rate_limits SET hits = hits + 1 WHERE key = ?`).bind(key).run();
+  return { allowed: true };
+}
+
+async function clearLoginLimits(db: D1Database, ip: string, email: string) {
+  await db.batch([
+    db.prepare(`DELETE FROM login_rate_limits WHERE key = ?`).bind(`ip:${ip}`),
+    db.prepare(`DELETE FROM login_rate_limits WHERE key = ?`).bind(`email:${email}`),
+  ]);
+}
+
 async function userCount(db: D1Database): Promise<number> {
   const r = await db.prepare(`SELECT COUNT(*) AS n FROM users`).first<{ n: number }>();
   return r?.n ?? 0;
@@ -56,19 +82,27 @@ auth.post("/login", async (c) => {
   const body = await c.req.json<{ email?: string; password?: string }>().catch(() => ({}) as any);
   const email = (body.email ?? "").trim().toLowerCase();
   const password = body.password ?? "";
-  const user = await c.env.DB.prepare(`SELECT * FROM users WHERE email = ?`).bind(email).first<UserRow>();
+  const ip = clientIp(c);
+  const t = now();
+  const db = c.env.DB;
+
+  const ipLimit = await rateLimitHit(db, `ip:${ip}`, t);
+  const emailLimit = email ? await rateLimitHit(db, `email:${email}`, t) : { allowed: true };
+  if (!ipLimit.allowed || !emailLimit.allowed) return c.json({ error: "too_many_attempts" }, 429);
+
+  const user = await db.prepare(`SELECT * FROM users WHERE email = ?`).bind(email).first<UserRow>();
   if (!user || !(await verifyPassword(password, user.password_hash))) return c.json({ error: "invalid_credentials" }, 401);
   if (user.totp_enabled) {
     // Second factor required: hand out a short-lived ticket instead of a session.
-    const t = now();
     const ticket = uid() + uid().replace(/-/g, "");
-    await c.env.DB.batch([
-      c.env.DB.prepare(`DELETE FROM mfa_tickets WHERE expires_at < ?`).bind(t),
-      c.env.DB.prepare(`INSERT INTO mfa_tickets (id, user_id, attempts, created_at, expires_at) VALUES (?, ?, 0, ?, ?)`).bind(ticket, user.id, t, t + 5 * 60_000),
+    await db.batch([
+      db.prepare(`DELETE FROM mfa_tickets WHERE expires_at < ?`).bind(t),
+      db.prepare(`INSERT INTO mfa_tickets (id, user_id, attempts, created_at, expires_at) VALUES (?, ?, 0, ?, ?)`).bind(ticket, user.id, t, t + 5 * 60_000),
     ]);
     return c.json({ mfa_required: true, ticket });
   }
-  await c.env.DB.prepare(`UPDATE users SET last_login_at = ? WHERE id = ?`).bind(now(), user.id).run();
+  await clearLoginLimits(db, ip, email);
+  await db.prepare(`UPDATE users SET last_login_at = ? WHERE id = ?`).bind(t, user.id).run();
   await createSession(c, user.id);
   return c.json({ user: toUser(user) });
 });
