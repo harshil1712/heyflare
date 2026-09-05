@@ -228,6 +228,10 @@ Primary mail ingest is **Gmail `users.watch` → Cloud Pub/Sub → `POST /pubsub
 
 This fork exposes mail tools over **Streamable HTTP MCP** at `/mcp` with bearer API tokens (Settings → Security). Default tokens are **read-only** (`search_mail`, `list_threads`, `read_thread`, `list_screener`, `find_contact`, `list_memory`); mint with write scope to allow mutating tools. Upstream tracking from here is selective cherry-pick.
 
+### Web Push
+
+Optional. Set `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` (and register `public/sw.js`). New Imbox mail notifies subscribed browsers. **Limitation:** works for Android/desktop PWA; iOS Tauri/WKWebView is not Web Push (no APNs in this phase).
+
 ## Two-factor authentication
 TOTP (Google Authenticator, 1Password, Authy…) with 10 single-use recovery codes. Settings → Security.
 

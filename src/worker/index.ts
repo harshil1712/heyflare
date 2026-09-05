@@ -25,6 +25,7 @@ import { VERSION, COMMIT, BUILT_AT } from "@shared/version";
 import pubsubRoutes from "./routes/pubsub";
 import { sweepGmailWatches } from "./pubsub";
 import tokensRoutes from "./routes/tokens";
+import pushRoutes from "./routes/push";
 import { handleMcpRequest } from "./mcp";
 
 export { SyncActor } from "./sync-actor";
@@ -66,6 +67,7 @@ api.route("/domains", domainRoutes);
 api.route("/ai", aiRoutes);
 api.route("/calendar", calendarRoutes);
 api.route("/tokens", tokensRoutes);
+api.route("/push", pushRoutes);
 
 
 const scoped = new Hono<AppEnv>();

@@ -483,6 +483,17 @@ export async function ingestParsed(env: Env, account: AccountRow, parsed: Parsed
       await logSync(db, account.id, "warn", `Brand logos failed: ${(e as Error).message}`);
     }
   }
+
+  // Web Push: wake the owner's devices for new Imbox / Reply Later threads (best-effort).
+  if (added && touchedThreads.size) {
+    try {
+      const { notifyNewMail } = await import("./push");
+      const rows = [...threadMap.values()].filter((th) => touchedThreads.has(th.id) && th._new);
+      if (rows.length) await notifyNewMail(env, account.user_id, rows);
+    } catch (e) {
+      await logSync(db, account.id, "warn", `Web push failed: ${(e as Error).message}`);
+    }
+  }
   return { added, threadIds: [...touchedThreads] };
 }
 

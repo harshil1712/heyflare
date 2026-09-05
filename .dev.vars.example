@@ -6,3 +6,8 @@ GOOGLE_CLIENT_SECRET=
 # Phase 2 — Gmail Pub/Sub push (optional until configured)
 # PUBSUB_VERIFICATION_TOKEN=long-random-string
 # GMAIL_PUBSUB_TOPIC=projects/YOUR_PROJECT/topics/heyflare-mail
+
+# Phase 4 — Web Push (optional; Android/desktop PWA only — not iOS WKWebView)
+# VAPID_PUBLIC_KEY=
+# VAPID_PRIVATE_KEY=
+# VAPID_SUBJECT=mailto:you@example.com

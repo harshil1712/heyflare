@@ -21,6 +21,7 @@ import m0016 from "../../migrations/0016_login_rate_limit.sql";
 import m0017 from "../../migrations/0017_fts5.sql";
 import m0018 from "../../migrations/0018_gmail_watch.sql";
 import m0019 from "../../migrations/0019_api_tokens.sql";
+import m0020 from "../../migrations/0020_web_push.sql";
 import { maybeBackfillFts } from "./fts";
 
 export const MIGRATIONS: { name: string; sql: string }[] = [
@@ -43,6 +44,7 @@ export const MIGRATIONS: { name: string; sql: string }[] = [
   { name: "0017_fts5.sql", sql: m0017 },
   { name: "0018_gmail_watch.sql", sql: m0018 },
   { name: "0019_api_tokens.sql", sql: m0019 },
+  { name: "0020_web_push.sql", sql: m0020 },
 ];
 
 /** Split a migration file into statements: full-line comments dropped, split on `;` at end of line.
