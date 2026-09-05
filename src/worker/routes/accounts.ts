@@ -2,12 +2,13 @@ import { Hono, type Context } from "hono";
 import type { AppEnv } from "../env";
 import type { AccountRow } from "../db";
 import { toAccount } from "../db";
-import { syncAccount } from "../sync";
 import { syncContactPhotos } from "../people";
 import { deleteAccountData } from "./domains";
 import { appOrigin, HANDOFF_PREFIX, CAL_PREFIX } from "./auth";
 import { googleConfigured, hasMailScope } from "../google";
 import { uid, now } from "../db";
+import { wakeSyncActor } from "../sync-actor";
+import { ensureGmailWatch } from "../pubsub";
 
 const accounts = new Hono<AppEnv>();
 
@@ -54,9 +55,14 @@ accounts.post("/:id/sync", async (c) => {
   if (acc.provider === "domain") return c.json({ ok: true, added: 0, status: "ok", account: toAccount(acc) });
   // Connected for calendar only: there is no mail to fetch, and that is not a failure.
   if (!hasMailScope(acc.scopes)) return c.json({ ok: true, added: 0, status: "ok", account: toAccount(acc) });
-  const r = await syncAccount(c.env, acc);
+  const r = await wakeSyncActor(c.env, acc.id, "manual");
+  // Flush-ish: SyncActor returns before sync finishes; wait briefly then reload for the response.
+  if (c.env.SYNC_ACTOR) {
+    const stub = c.env.SYNC_ACTOR.getByName(acc.id);
+    await stub.flush();
+  }
   const fresh = await ownAccount(c, acc.id);
-  return c.json({ ok: r.status === "ok", added: r.added, status: r.status, account: toAccount(fresh!) });
+  return c.json({ ok: r.status === "ok" || r.status === "started" || r.status === "coalesced", added: r.added, status: r.status, account: toAccount(fresh!) });
 });
 
 // "Start fresh": wipe everything synced for this account and watch for new mail from now on.
@@ -73,8 +79,12 @@ accounts.post("/:id/reset", async (c) => {
   let syncError: string | null = null;
   if (acc.provider === "gmail" && hasMailScope(acc.scopes)) {
     const fresh = await ownAccount(c, acc.id);
-    const r = await syncAccount(c.env, fresh!);
-    if (r.status !== "ok") syncError = (await ownAccount(c, acc.id))?.sync_error ?? r.status;
+    await wakeSyncActor(c.env, fresh!.id, "reset");
+    if (c.env.SYNC_ACTOR) await c.env.SYNC_ACTOR.getByName(acc.id).flush();
+    await ensureGmailWatch(c.env, (await ownAccount(c, acc.id))!);
+    if ((await ownAccount(c, acc.id))?.sync_status === "error") {
+      syncError = (await ownAccount(c, acc.id))?.sync_error ?? "error";
+    }
   }
   const after = await ownAccount(c, acc.id);
   return c.json({ ok: true, account: toAccount(after!), sync_error: syncError });

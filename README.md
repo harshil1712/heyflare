@@ -213,6 +213,17 @@ npm run check     # TypeScript (app + worker)
 
 Mail search uses D1 **FTS5** (trigram tokenizer) with `bm25` ranking; queries shorter than 3 characters (or with no letters) fall back to `LIKE`. Empty FTS indexes are backfilled in batches on migrate (`maybeBackfillFts`) so lived-in databases never rely on a single giant `INSERT SELECT`.
 
+### Gmail Pub/Sub (near-realtime sync)
+
+Primary mail ingest is **Gmail `users.watch` → Cloud Pub/Sub → `POST /pubsub/push`**, coordinated by a per-account `SyncActor` Durable Object (cron only renews watches and catches missed pushes).
+
+1. In Google Cloud: enable the Gmail API + Pub/Sub API; create a topic (e.g. `heyflare-mail`); grant `gmail-api-push@system.gserviceaccount.com` permission to publish to it.
+2. Create a **push** subscription to `https://YOUR_HOST/pubsub/push?token=YOUR_SECRET`.
+3. Set Worker secrets / `.dev.vars`:
+   - `PUBSUB_VERIFICATION_TOKEN` — same secret as `?token=`
+   - `GMAIL_PUBSUB_TOPIC` — `projects/YOUR_PROJECT/topics/heyflare-mail`
+4. Reconnect Gmail (or wait for the hourly-ish watch renewal) so `users.watch` is registered.
+
 ## Two-factor authentication
 TOTP (Google Authenticator, 1Password, Authy…) with 10 single-use recovery codes. Settings → Security.
 

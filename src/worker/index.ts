@@ -1,8 +1,7 @@
 import { Hono } from "hono";
 import type { AppEnv, Env } from "./env";
-import type { AccountRow } from "./db";
 import { requireUser, requireAccount, getSessionUser } from "./auth";
-import { syncAccount, processBubbleUps } from "./sync";
+import { processBubbleUps } from "./sync";
 import { processScheduledSends } from "./send";
 import authRoutes from "./routes/auth";
 import meRoutes from "./routes/me";
@@ -20,10 +19,13 @@ import { runLearning } from "./ai/memory";
 import domainRoutes from "./routes/domains";
 import calendarRoutes from "./routes/calendar";
 import { runCalendarSync } from "./calendar/sync";
-import { MAIL_SCOPE_SQL } from "./google";
 import { handleInboundEmail } from "./inbound";
 import { ensureMigrations } from "./migrations";
 import { VERSION, COMMIT, BUILT_AT } from "@shared/version";
+import pubsubRoutes from "./routes/pubsub";
+import { sweepGmailWatches } from "./pubsub";
+
+export { SyncActor } from "./sync-actor";
 
 const app = new Hono<AppEnv>();
 
@@ -33,6 +35,7 @@ app.onError((err, c) => {
 });
 
 app.route("/auth", authRoutes);
+app.route("/pubsub", pubsubRoutes);
 
 const api = new Hono<AppEnv>();
 // Anonymous GET /api/me -> { user: null, registration_open } (used by the register page)
@@ -96,21 +99,11 @@ async function runCron(env: Env) {
   } catch (e) {
     console.error("calendar sync failed", e);
   }
-  // Accounts connected for calendar only carry no mail scope, so they are not mail accounts to sync.
-  // MAIL_SCOPE_SQL mirrors hasMailScope: an empty `scopes` predates the column and does have mail.
-  const accounts = await db
-    .prepare(
-      `SELECT * FROM accounts WHERE provider = 'gmail' AND sync_status <> 'disconnected' AND refresh_token IS NOT NULL AND ${MAIL_SCOPE_SQL} ORDER BY initial_sync_done ASC, COALESCE(last_synced_at, 0) ASC LIMIT 8`
-    )
-    .all<AccountRow>();
-  for (const acc of accounts.results) {
-    // Skip accounts that are mid-sync from another invocation (stale 'syncing' > 10 min is retried).
-    if (acc.sync_status === "syncing" && acc.last_synced_at && Date.now() - acc.last_synced_at < 10 * 60_000) continue;
-    try {
-      await syncAccount(env, acc);
-    } catch (e) {
-      console.error("sync failed", acc.email, e);
-    }
+  // Pub/Sub is the primary ingest path; cron only renews watches and catches missed pushes.
+  try {
+    await sweepGmailWatches(env);
+  } catch (e) {
+    console.error("gmail watch sweep failed", e);
   }
 }
 
@@ -118,7 +111,7 @@ export default {
   fetch: async (request: Request, env: Env, ctx: ExecutionContext) => {
     const { pathname } = new URL(request.url);
     // Static assets never need the database; everything else gets a migrated schema first (cached after the first call).
-    if (pathname.startsWith("/api/") || pathname.startsWith("/auth/")) {
+    if (pathname.startsWith("/api/") || pathname.startsWith("/auth/") || pathname.startsWith("/pubsub/")) {
       try {
         await ensureMigrations(env);
       } catch (e) {

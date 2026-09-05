@@ -2,3 +2,7 @@
 # Leave empty at deploy time if you like — you can add both later under Workers → Settings → Variables and Secrets.
 GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
+
+# Phase 2 — Gmail Pub/Sub push (optional until configured)
+# PUBSUB_VERIFICATION_TOKEN=long-random-string
+# GMAIL_PUBSUB_TOPIC=projects/YOUR_PROJECT/topics/heyflare-mail

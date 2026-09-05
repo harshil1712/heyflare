@@ -53,6 +53,10 @@ export interface AccountRow {
   scopes?: string;
   /** Why this account has no calendars, when it has the scope but the list call fails. */
   calendar_error?: string | null;
+  /** Gmail users.watch expiry (epoch ms). */
+  gmail_watch_expiration?: number | null;
+  /** Topic / resource id last passed to users.watch. */
+  gmail_watch_resource_id?: string | null;
   created_at: number;
 }
 

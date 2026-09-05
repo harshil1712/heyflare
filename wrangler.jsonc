@@ -13,7 +13,7 @@
     "directory": "./dist",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*", "/auth/*"]
+    "run_worker_first": ["/api/*", "/auth/*", "/pubsub/*"]
   },
   "d1_databases": [
     { "binding": "DB", "database_name": "heyflare-db", "database_id": "00000000-0000-0000-0000-000000000000", "migrations_dir": "migrations" }
@@ -24,6 +24,10 @@
     "APP_NAME": "heyflare",
     "WORKER_NAME": "heyflare"
   },
+  "durable_objects": {
+    "bindings": [{ "name": "SYNC_ACTOR", "class_name": "SyncActor" }]
+  },
+  "migrations": [{ "tag": "v1-sync-actor", "new_sqlite_classes": ["SyncActor"] }],
   // Optional: a custom hostname instead of *.workers.dev (a zone on your account with no existing DNS record for the host):
   // "routes": [{ "pattern": "mail.example.com", "custom_domain": true }],
   // Optional: outbound mail for custom-domain mailboxes via Cloudflare Email Sending (Workers Paid, domain onboarded):

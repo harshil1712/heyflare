@@ -20,6 +20,12 @@ export interface Env {
   AI_MOCK?: string;
   /** Cloudflare Email Sending binding (`send_email`), when enabled on the account. */
   EMAIL?: { send(msg: any): Promise<any> };
+  /** Per-account sync coordinator (Phase 2). */
+  SYNC_ACTOR?: DurableObjectNamespace<import("./sync-actor").SyncActor>;
+  /** Shared secret for Pub/Sub push verification (`?token=` or Bearer). */
+  PUBSUB_VERIFICATION_TOKEN?: string;
+  /** Gmail users.watch topic, e.g. `projects/my-proj/topics/heyflare-mail`. */
+  GMAIL_PUBSUB_TOPIC?: string;
 }
 
 export type Variables = {

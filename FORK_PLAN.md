@@ -204,10 +204,10 @@ Stop after Phase 6 and summarize what shipped vs deferred.
 
 ## Quick status checklist
 
-- [x] Phase 0 — harness, CI, login rate limit  
-- [x] Phase 1 — FTS5  
-- [ ] Phase 2 — Pub/Sub + SyncActor  
-- [ ] Phase 3 — MCP + API tokens  
-- [ ] Phase 4 — Web Push  
-- [ ] Phase 5 — agent loop  
+- [x] Phase 0 — harness, CI, login rate limit
+- [x] Phase 1 — FTS5
+- [x] Phase 2 — Pub/Sub + SyncActor
+- [ ] Phase 3 — MCP + API tokens
+- [ ] Phase 4 — Web Push
+- [ ] Phase 5 — agent loop
 - [ ] Phase 6 — R2 + retention

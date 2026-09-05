@@ -277,12 +277,12 @@ auth.get("/google/callback", async (c) => {
         .bind(accountId, user.id, info.email, info.name, tok.access_token, tok.refresh_token ?? null, expiresAt, tok.scope ?? '', info.picture, now())
         .run();
     }
-    // Kick off the first sync chunk in the background. `syncAccount` skips an account whose token
-    // carries no mail scope, so a calendar-only connect never starts a Gmail sync it cannot finish.
+    // Kick off the first sync + Gmail watch in the background.
     const account = await db.prepare(`SELECT * FROM accounts WHERE id = ?`).bind(accountId).first<AccountRow>();
     if (account) {
-      const { syncAccount } = await import("../sync");
-      c.executionCtx.waitUntil(syncAccount(c.env, account));
+      const { wakeSyncActor } = await import("../sync-actor");
+      const { ensureGmailWatch } = await import("../pubsub");
+      c.executionCtx.waitUntil(wakeSyncActor(c.env, account.id, "connect").then(() => ensureGmailWatch(c.env, account)));
       c.executionCtx.waitUntil(ensureDefaultCalendars(c.env, user.id, account).catch(() => {}));
     }
     if (handoff) {

@@ -19,6 +19,7 @@ import m0014 from "../../migrations/0014_calendar_views.sql";
 import m0015 from "../../migrations/0015_calendar_error.sql";
 import m0016 from "../../migrations/0016_login_rate_limit.sql";
 import m0017 from "../../migrations/0017_fts5.sql";
+import m0018 from "../../migrations/0018_gmail_watch.sql";
 import { maybeBackfillFts } from "./fts";
 
 export const MIGRATIONS: { name: string; sql: string }[] = [
@@ -39,6 +40,7 @@ export const MIGRATIONS: { name: string; sql: string }[] = [
   { name: "0015_calendar_error.sql", sql: m0015 },
   { name: "0016_login_rate_limit.sql", sql: m0016 },
   { name: "0017_fts5.sql", sql: m0017 },
+  { name: "0018_gmail_watch.sql", sql: m0018 },
 ];
 
 /** Split a migration file into statements: full-line comments dropped, split on `;` at end of line.
