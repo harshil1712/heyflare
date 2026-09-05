@@ -7,6 +7,7 @@ import type { ContactRow, AccountRow } from "../db";
 import { gmailFetch, gmailJson, gmailPost } from "../google";
 import { b64urlDecodeBytes } from "../mime";
 import type { Address, Bucket, ThreadDetail, ImboxResponse, Counts } from "@shared/types";
+import { searchThreads } from "../fts";
 
 const mail = new Hono<AppEnv>();
 
@@ -302,23 +303,23 @@ mail.post("/power-through/seen", async (c) => {
 // ---------- Search ----------
 mail.get("/search", async (c) => {
   const db = c.env.DB;
-  const sc = scope(c);
+  const ids = c.get("accountIds") ?? [];
   const q = (c.req.query("q") ?? "").trim();
   const page = Math.max(0, parseInt(c.req.query("page") ?? "0", 10) || 0);
   if (!q) return c.json({ threads: [], next_page: null });
-  const like = `%${q}%`;
-  const rows = await db
-    .prepare(
-      `SELECT t.* FROM threads t WHERE ${sc.sql} AND t.merged_into IS NULL AND t.bucket <> 'trash' AND (
-         t.subject LIKE ? OR t.custom_subject LIKE ? OR t.snippet LIKE ? OR t.participants_json LIKE ? OR t.note LIKE ?
-         OR EXISTS (SELECT 1 FROM messages m WHERE m.thread_id = t.id AND (m.text_body LIKE ? OR m.from_email LIKE ? OR m.subject LIKE ?))
-       ) ORDER BY t.last_message_at DESC LIMIT ? OFFSET ?`
-    )
-    .bind(...sc.params, like, like, like, like, like, like, like, like, PAGE + 1, page * PAGE)
-    .all<ThreadRow>();
-  const hasMore = rows.results.length > PAGE;
-  const threads = await threadsWithLabels(db, rows.results.slice(0, PAGE));
-  return c.json({ threads, next_page: hasMore ? page + 1 : null, q });
+  const { hits, mode } = await searchThreads(db, ids, q, { limit: PAGE + 1, offset: page * PAGE });
+  const hasMore = hits.length > PAGE;
+  const threads = await threadsWithLabels(
+    db,
+    hits.slice(0, PAGE).map((h) => h.thread)
+  );
+  return c.json({
+    threads,
+    next_page: hasMore ? page + 1 : null,
+    q,
+    mode,
+    highlights: hits.slice(0, PAGE).map((h) => ({ thread_id: h.thread.id, snippet: h.highlight ?? null })),
+  });
 });
 
 // ---------- Thread detail ----------

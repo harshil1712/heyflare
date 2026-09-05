@@ -1,4 +1,5 @@
 // Tools the assistant can call. Every tool is scoped to the signed-in user's accounts.
+import { searchThreads } from "../fts";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { Env } from "../env";
 import type { AccountRow, ContactRow, ThreadRow, MessageRow } from "../db";
@@ -154,18 +155,18 @@ export async function runTool(ctx: ToolContext, name: string, rawInput: unknown)
       const q = String(input.query ?? "").trim();
       const limit = Math.min(25, Math.max(1, Number(input.limit) || 10));
       if (!q) return fail("query is required");
-      const like = `%${q}%`;
-      const rows = await db
-        .prepare(
-          `SELECT t.* FROM threads t WHERE t.account_id IN ${sc.sql} AND t.merged_into IS NULL AND t.bucket <> 'trash' AND (
-             t.subject LIKE ? OR t.custom_subject LIKE ? OR t.snippet LIKE ? OR t.participants_json LIKE ? OR t.note LIKE ?
-             OR EXISTS (SELECT 1 FROM messages m WHERE m.thread_id = t.id AND (m.text_body LIKE ? OR m.from_email LIKE ? OR m.subject LIKE ?))
-           ) ORDER BY t.last_message_at DESC LIMIT ?`
-        )
-        .bind(...sc.params, like, like, like, like, like, like, like, like, limit)
-        .all<ThreadRow>();
-      const list = await attachAvatars(db, await threadsWithLabels(db, rows.results));
-      return ok({ results: list.map(summary) }, `Searched mail for “${q}” · ${list.length} result${list.length === 1 ? "" : "s"}`);
+      const { hits, mode } = await searchThreads(db, ids, q, { limit });
+      const list = await attachAvatars(db, await threadsWithLabels(db, hits.map((h) => h.thread)));
+      return ok(
+        {
+          results: list.map((t, i) => ({
+            ...summary(t),
+            highlight: hits[i]?.highlight ?? null,
+          })),
+          mode,
+        },
+        `Searched mail for “${q}” · ${list.length} result${list.length === 1 ? "" : "s"}`
+      );
     }
     case "list_threads": {
       const bucket = String(input.bucket ?? "imbox");

@@ -18,6 +18,8 @@ import m0013 from "../../migrations/0013_day_covers.sql";
 import m0014 from "../../migrations/0014_calendar_views.sql";
 import m0015 from "../../migrations/0015_calendar_error.sql";
 import m0016 from "../../migrations/0016_login_rate_limit.sql";
+import m0017 from "../../migrations/0017_fts5.sql";
+import { maybeBackfillFts } from "./fts";
 
 export const MIGRATIONS: { name: string; sql: string }[] = [
   { name: "0001_init.sql", sql: m0001 },
@@ -36,18 +38,35 @@ export const MIGRATIONS: { name: string; sql: string }[] = [
   { name: "0014_calendar_views.sql", sql: m0014 },
   { name: "0015_calendar_error.sql", sql: m0015 },
   { name: "0016_login_rate_limit.sql", sql: m0016 },
+  { name: "0017_fts5.sql", sql: m0017 },
 ];
 
-/** Split a migration file into statements: full-line comments dropped, split on `;` at end of line. */
+/** Split a migration file into statements: full-line comments dropped, split on `;` at end of line.
+ *  `CREATE TRIGGER … BEGIN … END;` bodies are kept as a single statement. */
 export function splitStatements(sql: string): string[] {
-  const noComments = sql
-    .split("\n")
-    .filter((l) => !/^\s*--/.test(l))
-    .join("\n");
-  return noComments
-    .split(/;\s*(?:\n|$)/)
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0);
+  const lines = sql.split("\n").filter((l) => !/^\s*--/.test(l));
+  const out: string[] = [];
+  let buf: string[] = [];
+  let inTrigger = false;
+  for (const line of lines) {
+    buf.push(line);
+    if (!inTrigger && /\bCREATE\s+TRIGGER\b/i.test(line)) inTrigger = true;
+    if (inTrigger) {
+      if (/\bEND\s*;\s*$/i.test(line)) {
+        out.push(buf.join("\n").trim());
+        buf = [];
+        inTrigger = false;
+      }
+      continue;
+    }
+    if (/;\s*$/.test(line)) {
+      out.push(buf.join("\n").trim());
+      buf = [];
+    }
+  }
+  const tail = buf.join("\n").trim();
+  if (tail.length) out.push(tail);
+  return out.filter((s) => s.length > 0);
 }
 
 let ready: Promise<void> | null = null;
@@ -88,4 +107,5 @@ export async function runMigrations(env: Env) {
       /* sync_log may not exist yet on very early migrations */
     }
   }
+  await maybeBackfillFts(db);
 }

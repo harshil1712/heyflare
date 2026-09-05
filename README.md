@@ -211,6 +211,8 @@ npm test          # vitest run
 npm run check     # TypeScript (app + worker)
 ```
 
+Mail search uses D1 **FTS5** (trigram tokenizer) with `bm25` ranking; queries shorter than 3 characters (or with no letters) fall back to `LIKE`. Empty FTS indexes are backfilled in batches on migrate (`maybeBackfillFts`) so lived-in databases never rely on a single giant `INSERT SELECT`.
+
 ## Two-factor authentication
 TOTP (Google Authenticator, 1Password, Authy…) with 10 single-use recovery codes. Settings → Security.
 
