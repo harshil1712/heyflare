@@ -666,6 +666,36 @@ export function PreferencesSection({ compact }: { compact?: boolean }) {
             <span className="text-[13px] text-muted-foreground">sec</span>
           </div>
         </Row>
+        <Row label="Paper Trail retention" hint="Delete Paper Trail threads older than this many days. 0 keeps forever. D1 does not reclaim disk after deletes.">
+          <div className="flex items-center gap-2">
+            <Input
+              type="number"
+              min={0}
+              max={3650}
+              className={cn("w-20 text-right tnum", compact && "h-11 text-[16px]")}
+              value={settings.paperTrailRetentionDays ?? 0}
+              onChange={(e) => setSettings({ ...settings, paperTrailRetentionDays: Math.max(0, Math.min(3650, Number(e.target.value) || 0)) })}
+              onBlur={() => saveSettings(settings)}
+              aria-label="Paper Trail retention days"
+            />
+            <span className="text-[13px] text-muted-foreground">days</span>
+          </div>
+        </Row>
+        <Row label="Trash retention" hint="Delete Trash threads older than this many days. 0 keeps forever.">
+          <div className="flex items-center gap-2">
+            <Input
+              type="number"
+              min={0}
+              max={3650}
+              className={cn("w-20 text-right tnum", compact && "h-11 text-[16px]")}
+              value={settings.trashRetentionDays ?? 0}
+              onChange={(e) => setSettings({ ...settings, trashRetentionDays: Math.max(0, Math.min(3650, Number(e.target.value) || 0)) })}
+              onBlur={() => saveSettings(settings)}
+              aria-label="Trash retention days"
+            />
+            <span className="text-[13px] text-muted-foreground">days</span>
+          </div>
+        </Row>
       </Section>
     </>
   );

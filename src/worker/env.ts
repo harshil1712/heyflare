@@ -30,6 +30,8 @@ export interface Env {
   VAPID_PUBLIC_KEY?: string;
   VAPID_PRIVATE_KEY?: string;
   VAPID_SUBJECT?: string;
+  /** Large domain-mail attachment blobs (Phase 6). */
+  ATTACHMENTS?: R2Bucket;
 }
 
 export type Variables = {

@@ -39,7 +39,7 @@ accounts.delete("/:id", async (c) => {
   const acc = await ownAccount(c, c.req.param("id"));
   if (!acc) return c.json({ error: "not_found" }, 404);
   // Explicit cleanup (D1 may not have FK enforcement on for all statements).
-  await deleteAccountData(c.env.DB, acc.id);
+  await deleteAccountData(c.env.DB, acc.id, { env: c.env });
   // Best-effort token revocation.
   if (acc.refresh_token) {
     c.executionCtx.waitUntil(
@@ -69,7 +69,7 @@ accounts.post("/:id/sync", async (c) => {
 accounts.post("/:id/reset", async (c) => {
   const acc = await ownAccount(c, c.req.param("id"));
   if (!acc) return c.json({ error: "not_found" }, 404);
-  await deleteAccountData(c.env.DB, acc.id, { keepAccount: true });
+  await deleteAccountData(c.env.DB, acc.id, { keepAccount: true, env: c.env });
   await c.env.DB.prepare(
     `UPDATE accounts SET initial_sync_done = 0, initial_sync_count = 0, initial_sync_page_token = NULL, history_id = NULL,
        sync_status = 'idle', sync_error = NULL, photos_synced_at = NULL WHERE id = ?`

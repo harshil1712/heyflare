@@ -19,6 +19,10 @@ export interface UserSettings {
   defaultScreenTarget?: Exclude<ScreenStatus, "pending" | "screened_out">;
   undoSendSeconds?: number; // 0 disables
   showPreviews?: boolean;
+  /** Days to keep Paper Trail threads (0 = forever). Cron deletes older ones. */
+  paperTrailRetentionDays?: number;
+  /** Days to keep Trash threads (0 = forever). */
+  trashRetentionDays?: number;
 }
 
 export interface Account {

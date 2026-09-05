@@ -394,16 +394,22 @@ export async function ingestParsed(env: Env, account: AccountRow, parsed: Parsed
     for (const a of p.attachments) {
       if (!a.attachmentId) continue;
       const attId = uid();
+      let r2Key: string | null = null;
+      if (a.blob) {
+        const { putAttachmentBlob } = await import("./blobs");
+        const placed = await putAttachmentBlob(env, account.id, attId, a.blob);
+        r2Key = placed.r2Key;
+        if (placed.storeInD1) {
+          stmts.push(db.prepare(`INSERT INTO attachment_blobs (attachment_id, data, created_at) VALUES (?, ?, ?)`).bind(attId, a.blob, t0));
+        }
+      }
       stmts.push(
         db
           .prepare(
-            `INSERT INTO attachments (id, account_id, message_id, thread_id, gmail_attachment_id, filename, mime_type, size, content_id, is_inline, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+            `INSERT INTO attachments (id, account_id, message_id, thread_id, gmail_attachment_id, filename, mime_type, size, content_id, is_inline, created_at, r2_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
           )
-          .bind(attId, account.id, msgId, th.id, a.attachmentId, a.filename, a.mimeType, a.size, a.contentId, a.isInline ? 1 : 0, p.date)
+          .bind(attId, account.id, msgId, th.id, a.attachmentId, a.filename, a.mimeType, a.size, a.contentId, a.isInline ? 1 : 0, p.date, r2Key)
       );
-      if (a.blob) {
-        stmts.push(db.prepare(`INSERT INTO attachment_blobs (attachment_id, data, created_at) VALUES (?, ?, ?)`).bind(attId, a.blob, t0));
-      }
     }
     added++;
   }

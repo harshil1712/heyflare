@@ -232,6 +232,12 @@ This fork exposes mail tools over **Streamable HTTP MCP** at `/mcp` with bearer 
 
 Optional. Set `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` (and register `public/sw.js`). New Imbox mail notifies subscribed browsers. **Limitation:** works for Android/desktop PWA; iOS Tauri/WKWebView is not Web Push (no APNs in this phase).
 
+### Attachments (R2) and retention
+
+Domain-mail attachment blobs larger than **900 KB** are stored in the `ATTACHMENTS` R2 bucket (`wrangler.jsonc`); D1 keeps an `attachments.r2_key` pointer. Older large blobs still in D1 are **copied to R2 on first read**. Settings → Mail controls Paper Trail / Trash retention (days; `0` = keep forever); cron sweeps eligible threads.
+
+**Honest D1 note:** deleting rows does **not** shrink the D1 database file. Time Travel can recover recent state; a full rebuild/export is the nuclear option if you need a smaller DB.
+
 ## Two-factor authentication
 TOTP (Google Authenticator, 1Password, Authy…) with 10 single-use recovery codes. Settings → Security.
 

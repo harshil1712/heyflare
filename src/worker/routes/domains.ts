@@ -198,7 +198,7 @@ domains.delete("/:id", async (c) => {
   if (!d) return c.json({ error: "not_found" }, 404);
   const db = c.env.DB;
   const boxes = await mailboxesFor(db, d.id);
-  for (const acc of boxes) await deleteAccountData(db, acc.id);
+  for (const acc of boxes) await deleteAccountData(db, acc.id, { env: c.env });
   await db.prepare(`DELETE FROM domains WHERE id = ?`).bind(d.id).run();
   return c.json({ ok: true });
 });
@@ -228,7 +228,12 @@ domains.post("/:id/mailboxes", async (c) => {
 });
 
 /** Remove an account and everything under it (shared with DELETE /api/accounts/:id). */
-export async function deleteAccountData(db: D1Database, accountId: string, opts: { keepAccount?: boolean } = {}) {
+export async function deleteAccountData(db: D1Database, accountId: string, opts: { keepAccount?: boolean; env?: import("../env").Env } = {}) {
+  if (opts.env?.ATTACHMENTS) {
+    const keys = await db.prepare(`SELECT r2_key FROM attachments WHERE account_id = ? AND r2_key IS NOT NULL`).bind(accountId).all<{ r2_key: string }>();
+    const { deleteR2Keys } = await import("../blobs");
+    await deleteR2Keys(opts.env, keys.results.map((k) => k.r2_key));
+  }
   await db.batch([
     db.prepare(`DELETE FROM thread_labels WHERE thread_id IN (SELECT id FROM threads WHERE account_id = ?)`).bind(accountId),
     db.prepare(`DELETE FROM collection_threads WHERE thread_id IN (SELECT id FROM threads WHERE account_id = ?)`).bind(accountId),

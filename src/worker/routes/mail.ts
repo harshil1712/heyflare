@@ -623,10 +623,8 @@ mail.get("/messages/:id/attachments/:attId", async (c) => {
     "x-content-type-options": "nosniff",
   });
   if (acc.provider === "domain") {
-    const blob = await db.prepare(`SELECT data FROM attachment_blobs WHERE attachment_id = ?`).bind(att.id).first<{ data: unknown }>();
-    const raw = blob?.data;
-    // D1 hands BLOBs back as ArrayBuffer (remote) or number[] (local); normalize.
-    const bytes = raw instanceof ArrayBuffer ? new Uint8Array(raw) : Array.isArray(raw) ? Uint8Array.from(raw as number[]) : ArrayBuffer.isView(raw) ? new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength) : null;
+    const { loadAttachmentBytes } = await import("../blobs");
+    const bytes = await loadAttachmentBytes(c.env, att);
     if (!bytes) return c.json({ error: "attachment_not_stored" }, 404);
     return new Response(bytes, { headers: headersFor(bytes.byteLength) });
   }

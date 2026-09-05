@@ -120,6 +120,12 @@ async function runCron(env: Env) {
   } catch (e) {
     console.error("gmail watch sweep failed", e);
   }
+  try {
+    const { sweepRetention } = await import("./blobs");
+    await sweepRetention(env);
+  } catch (e) {
+    console.error("retention sweep failed", e);
+  }
 }
 
 export default {

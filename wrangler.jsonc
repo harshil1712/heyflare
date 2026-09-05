@@ -18,6 +18,9 @@
   "d1_databases": [
     { "binding": "DB", "database_name": "heyflare-db", "database_id": "00000000-0000-0000-0000-000000000000", "migrations_dir": "migrations" }
   ],
+  "r2_buckets": [
+    { "binding": "ATTACHMENTS", "bucket_name": "heyflare-attachments" }
+  ],
   // Every minute: Gmail incremental sync, bubble-ups, scheduled sends, contact photos.
   "triggers": { "crons": ["* * * * *"] },
   "vars": {

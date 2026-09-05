@@ -163,6 +163,8 @@ export interface AttachmentRow {
   content_id: string;
   is_inline: number;
   created_at: number;
+  /** R2 object key when the blob is tiered out of D1 (domain mail, >900 KB). */
+  r2_key?: string | null;
 }
 
 export interface LabelRow {
