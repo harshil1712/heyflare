@@ -224,6 +224,10 @@ Primary mail ingest is **Gmail `users.watch` → Cloud Pub/Sub → `POST /pubsub
    - `GMAIL_PUBSUB_TOPIC` — `projects/YOUR_PROJECT/topics/heyflare-mail`
 4. Reconnect Gmail (or wait for the hourly-ish watch renewal) so `users.watch` is registered.
 
+### MCP (agent access)
+
+This fork exposes mail tools over **Streamable HTTP MCP** at `/mcp` with bearer API tokens (Settings → Security). Default tokens are **read-only** (`search_mail`, `list_threads`, `read_thread`, `list_screener`, `find_contact`, `list_memory`); mint with write scope to allow mutating tools. Upstream tracking from here is selective cherry-pick.
+
 ## Two-factor authentication
 TOTP (Google Authenticator, 1Password, Authy…) with 10 single-use recovery codes. Settings → Security.
 

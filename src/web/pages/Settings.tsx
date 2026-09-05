@@ -28,6 +28,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { AiSection } from "../components/AiSettingsSection";
 import { CalendarSettingsSection } from "../components/CalendarSettingsSection";
+import { McpTokensSection } from "../components/McpTokensSection";
 import { useCardScroll } from "../lib/cardKeys";
 
 type Tab = "profile" | "preferences" | "accounts" | "domains" | "calendar" | "ai" | "security";
@@ -734,6 +735,7 @@ export function SecuritySection({ compact }: { compact?: boolean }) {
         </form>
       </Section>
       <TwoFactorBlock compact={compact} />
+      <McpTokensSection compact={compact} />
     </>
   );
 }

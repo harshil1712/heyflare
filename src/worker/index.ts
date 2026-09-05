@@ -24,6 +24,8 @@ import { ensureMigrations } from "./migrations";
 import { VERSION, COMMIT, BUILT_AT } from "@shared/version";
 import pubsubRoutes from "./routes/pubsub";
 import { sweepGmailWatches } from "./pubsub";
+import tokensRoutes from "./routes/tokens";
+import { handleMcpRequest } from "./mcp";
 
 export { SyncActor } from "./sync-actor";
 
@@ -36,6 +38,16 @@ app.onError((err, c) => {
 
 app.route("/auth", authRoutes);
 app.route("/pubsub", pubsubRoutes);
+
+// MCP (bearer tokens) — mounted before /api so it stays session-cookie-free.
+app.all("/mcp", async (c) => {
+  await ensureMigrations(c.env);
+  return handleMcpRequest(c.env, c.req.raw);
+});
+app.all("/mcp/*", async (c) => {
+  await ensureMigrations(c.env);
+  return handleMcpRequest(c.env, c.req.raw);
+});
 
 const api = new Hono<AppEnv>();
 // Anonymous GET /api/me -> { user: null, registration_open } (used by the register page)
@@ -53,6 +65,7 @@ api.route("/accounts", accountRoutes);
 api.route("/domains", domainRoutes);
 api.route("/ai", aiRoutes);
 api.route("/calendar", calendarRoutes);
+api.route("/tokens", tokensRoutes);
 
 
 const scoped = new Hono<AppEnv>();
@@ -111,7 +124,7 @@ export default {
   fetch: async (request: Request, env: Env, ctx: ExecutionContext) => {
     const { pathname } = new URL(request.url);
     // Static assets never need the database; everything else gets a migrated schema first (cached after the first call).
-    if (pathname.startsWith("/api/") || pathname.startsWith("/auth/") || pathname.startsWith("/pubsub/")) {
+    if (pathname.startsWith("/api/") || pathname.startsWith("/auth/") || pathname.startsWith("/pubsub/") || pathname.startsWith("/mcp")) {
       try {
         await ensureMigrations(env);
       } catch (e) {
