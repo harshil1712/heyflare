@@ -10,6 +10,87 @@ import { type AiConfig, makeProvider, describeApiError } from "./provider";
 import { htmlToText } from "../sanitize";
 
 const MAX_ITERATIONS = 12;
+const HISTORY_CHAR_BUDGET = 120_000; // ~30k tokens at chars/4
+const HISTORY_KEEP_TAIL = 8; // keep last N messages verbatim after compaction
+
+/** Read-only tools may run in parallel; everything else is serialized. */
+export const READ_ONLY_TOOLS = new Set([
+  "search_mail",
+  "list_threads",
+  "read_thread",
+  "list_screener",
+  "list_labels",
+  "list_collections",
+  "find_contact",
+  "list_memory",
+]);
+
+export function estimateChars(messages: Anthropic.MessageParam[]): number {
+  return messages.reduce((n, m) => n + JSON.stringify(m.content).length, 0);
+}
+
+/** Summarize oldest turns when history exceeds the char budget; keep the last N messages intact. */
+export function compactHistory(messages: Anthropic.MessageParam[], budget = HISTORY_CHAR_BUDGET, keepTail = HISTORY_KEEP_TAIL): Anthropic.MessageParam[] {
+  if (messages.length <= keepTail + 1 || estimateChars(messages) <= budget) return messages;
+  const head = messages.slice(0, Math.max(0, messages.length - keepTail));
+  const tail = messages.slice(messages.length - keepTail);
+  const summary = head
+    .map((m) => {
+      const role = m.role;
+      const text = typeof m.content === "string" ? m.content : JSON.stringify(m.content).slice(0, 400);
+      return `${role}: ${text}`;
+    })
+    .join("\n")
+    .slice(0, 6000);
+  return [{ role: "user", content: `[{compacted history}]\n${summary}` }, ...tail];
+}
+
+export async function withRetry<T>(fn: () => Promise<T>, opts: { retries?: number; label?: string } = {}): Promise<T> {
+  const retries = opts.retries ?? 3;
+  let last: unknown;
+  for (let i = 0; i <= retries; i++) {
+    try {
+      return await fn();
+    } catch (e) {
+      last = e;
+      const msg = String((e as Error)?.message ?? e);
+      const status = (e as { status?: number })?.status;
+      const retryable = status === 429 || (typeof status === "number" && status >= 500) || /429|rate|temporar|timeout|5\d\d/i.test(msg);
+      if (!retryable || i === retries) throw e;
+      await new Promise((r) => setTimeout(r, Math.min(8000, 400 * 2 ** i)));
+    }
+  }
+  throw last;
+}
+
+/** Run tool uses: parallel for read-only batches, serial for writes. */
+export async function runToolBatch(
+  ctx: ToolContext,
+  uses: Anthropic.ToolUseBlock[],
+  send: (e: SseEvent) => Promise<void>
+): Promise<Anthropic.ToolResultBlockParam[]> {
+  const results: Anthropic.ToolResultBlockParam[] = new Array(uses.length);
+  const readIdx: number[] = [];
+  const writeIdx: number[] = [];
+  uses.forEach((u, i) => (READ_ONLY_TOOLS.has(u.name) ? readIdx : writeIdx).push(i));
+
+  const runOne = async (i: number) => {
+    const u = uses[i]!;
+    await send({ type: "tool", id: u.id, name: u.name, status: "running", summary: labelFor(u.name) });
+    let r: { result: string; summary: string; isError?: boolean };
+    try {
+      r = await runTool(ctx, u.name, u.input);
+    } catch (e) {
+      r = { result: JSON.stringify({ error: (e as Error).message }), summary: `${labelFor(u.name)} failed`, isError: true };
+    }
+    await send({ type: "tool", id: u.id, name: u.name, status: r.isError ? "error" : "done", summary: r.summary });
+    results[i] = { type: "tool_result", tool_use_id: u.id, content: r.result, is_error: r.isError || undefined };
+  };
+
+  if (readIdx.length) await Promise.all(readIdx.map(runOne));
+  for (const i of writeIdx) await runOne(i);
+  return results;
+}
 
 export interface ChatDeps {
   env: Env;
@@ -48,11 +129,12 @@ export async function runChatTurn(d: ChatDeps, conversationId: string, userText:
   const system = await buildSystemPrompt(d);
   // History from the DB (full content blocks so tool_use / tool_result pairs round-trip).
   const hist = await db.prepare(`SELECT role, content_json FROM ai_messages WHERE conversation_id = ? ORDER BY created_at ASC LIMIT 200`).bind(conversationId).all<{ role: "user" | "assistant"; content_json: string }>();
-  const messages: Anthropic.MessageParam[] = hist.results.map((r) => ({ role: r.role, content: JSON.parse(r.content_json) }));
+  let messages: Anthropic.MessageParam[] = hist.results.map((r) => ({ role: r.role, content: JSON.parse(r.content_json) }));
   // Context blocks (threads the user attached) go first, clearly labelled, then the user's own words.
   const userBlock: Anthropic.MessageParam = { role: "user", content: [...contextBlocks.map((text) => ({ type: "text" as const, text })), { type: "text", text: userText }] };
   messages.push(userBlock);
   await db.prepare(`INSERT INTO ai_messages (id, conversation_id, role, content_json, created_at) VALUES (?, ?, 'user', ?, ?)`).bind(uid(), conversationId, JSON.stringify(userBlock.content), now()).run();
+  messages = compactHistory(messages);
 
   const ctx: ToolContext = {
     env: d.env,
@@ -66,17 +148,27 @@ export async function runChatTurn(d: ChatDeps, conversationId: string, userText:
   try {
     for (let i = 0; i < MAX_ITERATIONS; i++) {
       if (signal?.aborted) break;
-      let final: { stop: "end" | "tool_use" | "refusal" | "max_tokens"; content: Anthropic.ContentBlock[] } | null = null;
-      let failed = false;
-      for await (const ev of provider.stream({ system, messages, tools: TOOLS, maxTokens: 8000, effort: "medium", signal })) {
-        if (ev.type === "text") await send({ type: "text", text: ev.text });
-        else if (ev.type === "error") {
-          await send({ type: "error", message: ev.message });
-          failed = true;
-          break;
-        } else final = { stop: ev.stop, content: ev.content };
-      }
-      if (failed || !final) break;
+      // Holder object so TS tracks assignments inside the withRetry callback.
+      const turn: {
+        final: { stop: "end" | "tool_use" | "refusal" | "max_tokens"; content: Anthropic.ContentBlock[] } | null;
+        failed: boolean;
+      } = { final: null, failed: false };
+      await withRetry(async () => {
+        turn.final = null;
+        turn.failed = false;
+        for await (const ev of provider.stream({ system, messages, tools: TOOLS, maxTokens: 8000, effort: "medium", signal })) {
+          if (ev.type === "text") await send({ type: "text", text: ev.text });
+          else if (ev.type === "error") {
+            // Treat provider stream errors as retryable throws when they look like 429/5xx.
+            if (/429|rate|5\d\d|temporar/i.test(ev.message)) throw Object.assign(new Error(ev.message), { status: 429 });
+            await send({ type: "error", message: ev.message });
+            turn.failed = true;
+            break;
+          } else turn.final = { stop: ev.stop, content: ev.content };
+        }
+      });
+      if (turn.failed || !turn.final) break;
+      const final = turn.final;
       if (final.content.length) {
         messages.push({ role: "assistant", content: final.content });
         await db.prepare(`INSERT INTO ai_messages (id, conversation_id, role, content_json, created_at) VALUES (?, ?, 'assistant', ?, ?)`).bind(uid(), conversationId, JSON.stringify(final.content), now()).run();
@@ -88,21 +180,11 @@ export async function runChatTurn(d: ChatDeps, conversationId: string, userText:
       if (final.stop !== "tool_use") break;
 
       const uses = final.content.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
-      const results: Anthropic.ToolResultBlockParam[] = [];
-      for (const u of uses) {
-        await send({ type: "tool", id: u.id, name: u.name, status: "running", summary: labelFor(u.name) });
-        let r: { result: string; summary: string; isError?: boolean };
-        try {
-          r = await runTool(ctx, u.name, u.input);
-        } catch (e) {
-          r = { result: JSON.stringify({ error: (e as Error).message }), summary: `${labelFor(u.name)} failed`, isError: true };
-        }
-        await send({ type: "tool", id: u.id, name: u.name, status: r.isError ? "error" : "done", summary: r.summary });
-        results.push({ type: "tool_result", tool_use_id: u.id, content: r.result, is_error: r.isError || undefined });
-      }
+      const results = await runToolBatch(ctx, uses, send);
       const resultMsg: Anthropic.MessageParam = { role: "user", content: results };
       messages.push(resultMsg);
       await db.prepare(`INSERT INTO ai_messages (id, conversation_id, role, content_json, created_at) VALUES (?, ?, 'user', ?, ?)`).bind(uid(), conversationId, JSON.stringify(results), now()).run();
+      messages = compactHistory(messages);
     }
   } catch (e) {
     if (!(signal?.aborted)) await send({ type: "error", message: describeApiError(e) });

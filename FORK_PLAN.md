@@ -2,7 +2,7 @@
 
 **Repo:** `harshil1712/heyflare` (fork of `doable-team/heyflare`)  
 **Remotes:** `origin` = your fork; `upstream` = `doable-team/heyflare`  
-**Status:** Phase 0–1 complete. Start at **Phase 2**.
+**Status:** Phases 0–5 complete. Start at **Phase 6**.
 
 Work on `main` unless told otherwise. Commit and push to `origin` after each phase’s done-when is green. Prefer upstreamable shape for Phases 1–2; treat Phase 3+ as fork identity (cherry-pick upstream after that, don’t promise forever-rebase).
 
@@ -207,7 +207,7 @@ Stop after Phase 6 and summarize what shipped vs deferred.
 - [x] Phase 0 — harness, CI, login rate limit
 - [x] Phase 1 — FTS5
 - [x] Phase 2 — Pub/Sub + SyncActor
-- [ ] Phase 3 — MCP + API tokens
-- [ ] Phase 4 — Web Push
-- [ ] Phase 5 — agent loop
+- [x] Phase 3 — MCP + API tokens
+- [x] Phase 4 — Web Push
+- [x] Phase 5 — agent loop
 - [ ] Phase 6 — R2 + retention

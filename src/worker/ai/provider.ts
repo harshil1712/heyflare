@@ -155,7 +155,10 @@ class AnthropicProvider implements LlmProvider {
         model: this.model,
         max_tokens: p.maxTokens,
         system: [{ type: "text", text: p.system, cache_control: { type: "ephemeral" } }],
-        tools: p.tools,
+        // Cache breakpoint on the tools prefix (last tool) so tool defs stay cached across turns.
+        tools: p.tools.length
+          ? p.tools.map((t, i) => (i === p.tools.length - 1 ? { ...t, cache_control: { type: "ephemeral" as const } } : t))
+          : p.tools,
         messages: p.messages,
         output_config: { effort: p.effort ?? "medium" },
       },
