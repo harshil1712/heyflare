@@ -226,7 +226,9 @@ Primary mail ingest is **Gmail `users.watch` → Cloud Pub/Sub → `POST /pubsub
 
 ### MCP (agent access)
 
-This fork exposes mail tools over **Streamable HTTP MCP** at `/mcp` with bearer API tokens (Settings → Security). Default tokens are **read-only** (`search_mail`, `list_threads`, `read_thread`, `list_screener`, `find_contact`, `list_memory`); mint with write scope to allow mutating tools. Upstream tracking from here is selective cherry-pick.
+This fork exposes mail tools over **stateless Streamable HTTP MCP** at `/mcp` (MCP SDK v2 / `2026-07-28`, with the SDK’s built-in 2025 legacy fallback). Auth is bearer API tokens (Settings → Security) — not session cookies. Default tokens are **read-only** (`search_mail`, `list_threads`, `read_thread`, `list_screener`, `find_contact`, `list_memory`); mint with write scope for mutating tools. Upstream tracking from here is selective cherry-pick.
+
+Connect clients to `https://YOUR_HOST/mcp` with `Authorization: Bearer hf_…`. Modern clients may send `MCP-Protocol-Version` / `Mcp-Method` headers; older Streamable HTTP clients still work via the dual-era handler.
 
 ### Web Push
 

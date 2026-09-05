@@ -1,30 +1,27 @@
-// Minimal Streamable HTTP MCP (JSON-RPC) over /mcp — reuses runTool.
+// Stateless MCP (2026-07-28) via official createMcpHandler — Cloudflare Workers guidance.
+// Dual-era: modern Streamable HTTP + legacy 2025 stateless fallback (SDK default).
+// Auth stays heyflare API bearer tokens (Settings → Security); no OAuth/DO session.
+import { z } from "zod";
+import {
+  McpServer,
+  createMcpHandler,
+  hostHeaderValidationResponse,
+  originValidationResponse,
+  localhostAllowedHostnames,
+} from "@modelcontextprotocol/server";
 import type { Env } from "./env";
 import { TOOLS, runTool, type ToolContext } from "./ai/tools";
-import { authenticateBearer, toolAllowed, MCP_READ_TOOLS, type AuthTokenContext } from "./api-tokens";
+import { authenticateBearer, toolAllowed, type AuthTokenContext } from "./api-tokens";
 import { loadAiConfig } from "./ai/provider";
+import { VERSION } from "@shared/version";
 
-type JsonRpcId = string | number | null;
-interface JsonRpcReq {
-  jsonrpc?: string;
-  id?: JsonRpcId;
-  method?: string;
-  params?: Record<string, unknown>;
-}
-
-function ok(id: JsonRpcId, result: unknown) {
-  return { jsonrpc: "2.0", id: id ?? null, result };
-}
-function err(id: JsonRpcId, code: number, message: string) {
-  return { jsonrpc: "2.0", id: id ?? null, error: { code, message } };
-}
-
-function mcpToolsFor(scopes: "read" | "write") {
-  return TOOLS.filter((t) => toolAllowed(scopes, t.name)).map((t) => ({
-    name: t.name,
-    description: t.description,
-    inputSchema: t.input_schema,
-  }));
+function toolInputSchema(tool: (typeof TOOLS)[number]) {
+  const props = (tool.input_schema as { properties?: Record<string, unknown> })?.properties ?? {};
+  const shape: Record<string, z.ZodType> = {};
+  for (const key of Object.keys(props)) {
+    shape[key] = z.unknown().optional().nullable();
+  }
+  return Object.keys(shape).length ? z.object(shape).passthrough() : z.object({});
 }
 
 async function toolContext(env: Env, auth: AuthTokenContext): Promise<ToolContext> {
@@ -38,69 +35,82 @@ async function toolContext(env: Env, auth: AuthTokenContext): Promise<ToolContex
   };
 }
 
-export async function handleMcpJsonRpc(env: Env, auth: AuthTokenContext, body: JsonRpcReq): Promise<unknown> {
-  const id = body.id ?? null;
-  const method = body.method ?? "";
-  const params = body.params ?? {};
+/** Fresh McpServer per request so tools close over the authenticated token scope. */
+export async function createHeyflareMcpServer(env: Env, auth: AuthTokenContext): Promise<McpServer> {
+  const server = new McpServer({ name: "heyflare", version: VERSION });
+  const ctx = await toolContext(env, auth);
 
-  switch (method) {
-    case "initialize":
-      return ok(id, {
-        protocolVersion: "2025-03-26",
-        capabilities: { tools: {} },
-        serverInfo: { name: "heyflare", version: "0.3.0" },
-      });
-    case "notifications/initialized":
-      return ok(id, {});
-    case "ping":
-      return ok(id, {});
-    case "tools/list":
-      return ok(id, { tools: mcpToolsFor(auth.scopes) });
-    case "tools/call": {
-      const name = String((params as any).name ?? "");
-      const args = ((params as any).arguments ?? {}) as Record<string, unknown>;
-      if (!name) return err(id, -32602, "name required");
-      if (!toolAllowed(auth.scopes, name)) {
-        return ok(id, {
-          content: [{ type: "text", text: JSON.stringify({ error: "tool_not_permitted", tool: name, scope: auth.scopes }) }],
-          isError: true,
-        });
+  for (const tool of TOOLS) {
+    if (!toolAllowed(auth.scopes, tool.name)) continue;
+    const name = tool.name;
+    server.registerTool(
+      name,
+      {
+        description: tool.description ?? name,
+        inputSchema: toolInputSchema(tool),
+      },
+      async (args) => {
+        const r = await runTool(ctx, name, args ?? {});
+        return {
+          content: [{ type: "text" as const, text: r.result }],
+          isError: !!r.isError,
+        };
       }
-      const ctx = await toolContext(env, auth);
-      const r = await runTool(ctx, name, args);
-      return ok(id, {
-        content: [{ type: "text", text: r.result }],
-        isError: !!r.isError,
-      });
+    );
+  }
+  return server;
+}
+
+function securityReject(env: Env, request: Request): Response | undefined {
+  const host = new URL(request.url).hostname;
+  const hosts = [...localhostAllowedHostnames(), host];
+  if (env.APP_URL) {
+    try {
+      hosts.push(new URL(env.APP_URL).hostname);
+    } catch {
+      /* ignore */
     }
-    default:
-      return err(id, -32601, `Method not found: ${method}`);
   }
+  // Skip Host check when the header is absent (Vitest SELF.fetch); Workers always send Host.
+  if (request.headers.get("host")) {
+    const hostReject = hostHeaderValidationResponse(request, hosts);
+    if (hostReject) return hostReject;
+  }
+  return originValidationResponse(request, hosts);
 }
 
+/**
+ * Mount at `/mcp`. Uses MCP SDK v2 `createMcpHandler` (stateless 2026-07-28 +
+ * 2025 legacy fallback). Bearer `hf_…` tokens from Settings → Security.
+ */
 export async function handleMcpRequest(env: Env, request: Request): Promise<Response> {
-  if (request.method === "GET") {
-    return Response.json({
-      name: "heyflare",
-      transport: "streamable-http",
-      read_tools: [...MCP_READ_TOOLS],
-      hint: "POST JSON-RPC with Authorization: Bearer hf_…",
-    });
+  const blocked = securityReject(env, request);
+  if (blocked) return blocked;
+
+  const raw = request.headers.get("authorization");
+  const auth = await authenticateBearer(env, raw);
+  if (!auth) {
+    return Response.json(
+      { error: "unauthorized" },
+      { status: 401, headers: { "www-authenticate": 'Bearer realm="heyflare-mcp"' } }
+    );
   }
-  if (request.method !== "POST") return new Response("Method Not Allowed", { status: 405 });
 
-  const auth = await authenticateBearer(env, request.headers.get("authorization"));
-  if (!auth) return Response.json({ error: "unauthorized" }, { status: 401 });
+  const token = raw!.slice(7).trim();
+  const handler = createMcpHandler(async () => createHeyflareMcpServer(env, auth), {
+    // Default dual-era: modern 2026-07-28 + stateless 2025 clients (Claude Desktop, etc.).
+    legacy: "stateless",
+    // Tools-only: prefer a single JSON body (avoids SSE for list/call).
+    responseMode: "json",
+    onerror: (e) => console.error("mcp handler error", e),
+  });
 
-  const body = (await request.json().catch(() => null)) as JsonRpcReq | JsonRpcReq[] | null;
-  if (!body) return Response.json(err(null, -32700, "Parse error"), { status: 400 });
-
-  if (Array.isArray(body)) {
-    const results = [];
-    for (const item of body) results.push(await handleMcpJsonRpc(env, auth, item));
-    return Response.json(results);
-  }
-  return Response.json(await handleMcpJsonRpc(env, auth, body));
+  return handler.fetch(request, {
+    authInfo: {
+      token,
+      clientId: auth.tokenId,
+      scopes: auth.scopes === "write" ? ["mcp:write"] : ["mcp:read"],
+      extra: { userId: auth.user.id, scopes: auth.scopes },
+    },
+  });
 }
-
-export { authenticateBearer };

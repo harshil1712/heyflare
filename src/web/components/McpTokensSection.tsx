@@ -52,7 +52,7 @@ export function McpTokensSection({ compact }: { compact?: boolean }) {
   return (
     <Section
       title="MCP / API tokens"
-      description="Bearer tokens for agents (Claude Desktop, etc.) at /mcp. Default is read-only; opt into write tools per token."
+      description="Bearer tokens for agents (Claude Desktop, etc.) at /mcp. MCP SDK v2 (stateless Streamable HTTP). Default is read-only; opt into write tools per token."
     >
       <div className="rounded-lg border border-border divide-y divide-border">
         <Row label="Endpoint" hint="Streamable HTTP JSON-RPC">
