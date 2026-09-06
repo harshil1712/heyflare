@@ -141,13 +141,12 @@ xattr -dr com.apple.quarantine /Applications/heyflare.app
 
 ## iPhone app
 
-A native iOS app (Tauri 2, WKWebView) lives in [`apps/ios`](apps/ios). It wraps the same server with the hand-built
-mobile UI, system notifications and links that open in Safari. It builds with a **free Apple ID** — no paid developer
-account — and [`apps/ios/README.md`](apps/ios/README.md) covers signing it, the 7-day expiry, and refreshing over Wi-Fi
-with SideStore or AltStore. You need full Xcode to build it.
+**Preferred:** Expo native app in [`apps/mobile`](apps/mobile) (Expo UI / SwiftUI + Jetpack Compose). Enter your Worker URL, sign in, read Imbox and threads.
+
+**Legacy:** Tauri WKWebView shell in [`apps/ios`](apps/ios) still builds, but new mobile work should go to Expo. APNs push is planned for the Expo app (you need an Apple Developer account).
 
 ```sh
-cd apps/ios && npm install && npm run ios:init && npm run dev
+cd apps/mobile && npm install && npm run ios
 ```
 
 ## Updating
@@ -156,7 +155,7 @@ heyflare tells you when a new version is out: an **Update available** row appear
 dialog explains what changed and how to get it.
 
 - **Mac app** — press **Update and restart**. It downloads, installs and relaunches itself.
-- **iPhone app** — rebuild from source, or let SideStore or AltStore refresh it.
+- **iPhone app** — Expo app in `apps/mobile`, or refresh the legacy Tauri shell / SideStore.
 - **Created with npm** — `npx create-heyflare deploy`
 - **Cloned repo** — `git pull && npm run deploy`
 - **Fork + Workers Builds** — merge upstream and push; Cloudflare deploys it.

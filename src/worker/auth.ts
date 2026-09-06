@@ -67,6 +67,11 @@ export async function createSession(c: Context<AppEnv>, userId: string): Promise
   return id;
 }
 
+/** True when the client is the Expo / native app (needs session_token in JSON; cookies alone are awkward). */
+export function isMobileClient(c: Context<AppEnv>): boolean {
+  return (c.req.header("x-heyflare-client") ?? "").toLowerCase() === "mobile";
+}
+
 export async function destroySession(c: Context<AppEnv>) {
   const id = getSessionId(c);
   if (id) await c.env.DB.prepare(`DELETE FROM sessions WHERE id = ?`).bind(id).run();
@@ -75,7 +80,11 @@ export async function destroySession(c: Context<AppEnv>) {
 
 function getSessionId(c: Context<AppEnv>): string | null {
   const auth = c.req.header("authorization");
-  if (auth && auth.toLowerCase().startsWith("bearer ")) return auth.slice(7).trim();
+  if (auth && auth.toLowerCase().startsWith("bearer ")) {
+    const tok = auth.slice(7).trim();
+    // API tokens (hf_…) are for /mcp only — never treat them as session ids.
+    if (tok && !tok.startsWith("hf_")) return tok;
+  }
   return getCookie(c, SESSION_COOKIE) ?? null;
 }
 
