@@ -46,10 +46,6 @@ export default ({ config }: ConfigContext): ExpoConfig => {
         },
       ],
     },
-    web: {
-      output: "static",
-      favicon: "./assets/images/favicon.png",
-    },
     plugins: [
       "expo-router",
       "expo-secure-store",
@@ -80,7 +76,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     extra: {
       defaultServer: DEFAULT_SERVER,
       eas: {
-        projectId: projectIdReady ? EAS_PROJECT_ID : undefined,
+        projectId: "7a2d4fe1-ece8-4db4-aeba-a78a13d7184e"
       },
       router: {},
     },

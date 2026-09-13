@@ -37,7 +37,7 @@
   "migrations": [{ "tag": "v1-sync-actor", "new_sqlite_classes": ["SyncActor"] }],
   // Optional: a custom hostname instead of *.workers.dev (a zone on your account with no existing DNS record for the host):
   // "routes": [{ "pattern": "mail.example.com", "custom_domain": true }],
-  // Optional: outbound mail for custom-domain mailboxes via Cloudflare Email Sending (Workers Paid, domain onboarded):
-  // "send_email": [{ "name": "EMAIL" }],
+  // Outbound for custom-domain mailboxes via Cloudflare Email Sending (Workers Paid + domain onboarded in Email Sending).
+  "send_email": [{ "name": "EMAIL" }],
   "observability": { "enabled": true }
 }

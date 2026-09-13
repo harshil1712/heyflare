@@ -185,7 +185,7 @@ Settings → Domains. The domain must be a zone on your Cloudflare account (full
   and the composer says so rather than failing silently.
   - **Cloudflare Email Sending** — needs all three, and the send fails until every one is done:
     1. Onboard the domain under Email → Email Sending in the dashboard, and verify it.
-    2. Uncomment `"send_email": [{ "name": "EMAIL" }]` in your `wrangler.jsonc` (or `wrangler.local.jsonc`).
+    2. Ensure `"send_email": [{ "name": "EMAIL" }]` is in your `wrangler.jsonc` (or `wrangler.local.jsonc`).
     3. Redeploy, so the binding actually reaches the Worker.
 
     A send that gets past the binding but is refused reports Cloudflare's own reason — `E_SENDER_DOMAIN_NOT_AVAILABLE`
