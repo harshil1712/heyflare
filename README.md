@@ -141,13 +141,16 @@ xattr -dr com.apple.quarantine /Applications/heyflare.app
 
 ## iPhone app
 
-**Preferred:** Expo native app in [`apps/mobile`](apps/mobile) (Expo UI / SwiftUI + Jetpack Compose). Enter your Worker URL, sign in, read Imbox and threads.
+**Preferred:** Expo native app in [`apps/mobile`](apps/mobile) — TestFlight-ready via EAS (`eas.json`), Imbox / Feed / Screener / Calendar, compose/reply, trays, search, assistant, and **push** (Expo → APNs). Enter your Worker URL and sign in.
 
-**Legacy:** Tauri WKWebView shell in [`apps/ios`](apps/ios) still builds, but new mobile work should go to Expo. APNs push is planned for the Expo app (you need an Apple Developer account).
+**Legacy:** Tauri WKWebView shell in [`apps/ios`](apps/ios) still builds, but new mobile work should go to Expo.
 
 ```sh
 cd apps/mobile && npm install && npm run ios
+# TestFlight: npx eas-cli login && npx eas-cli init && npm run build:ios && npm run submit:ios
 ```
+
+See [`apps/mobile/README.md`](apps/mobile/README.md) for credentials, push, and App Store Connect steps.
 
 ## Updating
 
@@ -231,7 +234,7 @@ Connect clients to `https://YOUR_HOST/mcp` with `Authorization: Bearer hf_…`. 
 
 ### Web Push
 
-Optional. Set `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` (and register `public/sw.js`). New Imbox mail notifies subscribed browsers. **Limitation:** works for Android/desktop PWA; iOS Tauri/WKWebView is not Web Push (no APNs in this phase).
+Optional. Set `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` (and register `public/sw.js`). New Imbox mail notifies subscribed browsers. **iOS native:** use the Expo app’s device tokens (`/api/push/devices`, migration `0022`) instead — Web Push does not replace APNs.
 
 ### Attachments (R2) and retention
 

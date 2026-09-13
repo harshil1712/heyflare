@@ -136,9 +136,126 @@ export async function sendPush(env: Env, sub: PushSubRow): Promise<"ok" | "gone"
   }
 }
 
+export type DevicePlatform = "ios" | "android" | "unknown";
+
+export interface DeviceTokenRow {
+  id: string;
+  user_id: string;
+  token: string;
+  platform: DevicePlatform;
+  device_name: string | null;
+  created_at: number;
+  last_seen_at: number;
+}
+
+function normalizePlatform(p?: string | null): DevicePlatform {
+  if (p === "ios" || p === "android") return p;
+  return "unknown";
+}
+
+export async function upsertDeviceToken(
+  env: Env,
+  userId: string,
+  token: string,
+  platform?: string | null,
+  deviceName?: string | null
+): Promise<DeviceTokenRow> {
+  const t = now();
+  const plat = normalizePlatform(platform);
+  const existing = await env.DB.prepare(`SELECT * FROM device_tokens WHERE token = ?`).bind(token).first<DeviceTokenRow>();
+  if (existing) {
+    await env.DB.prepare(
+      `UPDATE device_tokens SET user_id = ?, platform = ?, device_name = ?, last_seen_at = ? WHERE id = ?`
+    )
+      .bind(userId, plat, deviceName ?? null, t, existing.id)
+      .run();
+    return { ...existing, user_id: userId, platform: plat, device_name: deviceName ?? null, last_seen_at: t };
+  }
+  const row: DeviceTokenRow = {
+    id: uid(),
+    user_id: userId,
+    token,
+    platform: plat,
+    device_name: deviceName ?? null,
+    created_at: t,
+    last_seen_at: t,
+  };
+  await env.DB.prepare(
+    `INSERT INTO device_tokens (id, user_id, token, platform, device_name, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
+  )
+    .bind(row.id, row.user_id, row.token, row.platform, row.device_name, row.created_at, row.last_seen_at)
+    .run();
+  return row;
+}
+
+export async function deleteDeviceToken(env: Env, userId: string, token: string): Promise<boolean> {
+  const r = await env.DB.prepare(`DELETE FROM device_tokens WHERE user_id = ? AND token = ?`).bind(userId, token).run();
+  return (r.meta.changes ?? 0) > 0;
+}
+
+export async function listDeviceTokens(env: Env, userId: string): Promise<DeviceTokenRow[]> {
+  return (await env.DB.prepare(`SELECT * FROM device_tokens WHERE user_id = ?`).bind(userId).all<DeviceTokenRow>()).results;
+}
+
+/** Expo Push API → APNs/FCM. Drops DeviceNotRegistered tokens. */
+export async function sendExpoPush(
+  env: Env,
+  devices: DeviceTokenRow[],
+  message: { title: string; body: string; data?: Record<string, string>; badge?: number }
+): Promise<{ ok: number; gone: number }> {
+  if (!devices.length) return { ok: 0, gone: 0 };
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+    "Accept-Encoding": "gzip, deflate",
+    "Content-Type": "application/json",
+  };
+  if (env.EXPO_ACCESS_TOKEN) headers.Authorization = `Bearer ${env.EXPO_ACCESS_TOKEN}`;
+
+  const payload = devices.map((d) => ({
+    to: d.token,
+    sound: "default" as const,
+    title: message.title,
+    body: message.body,
+    data: message.data ?? {},
+    badge: message.badge,
+    priority: "high" as const,
+  }));
+
+  try {
+    const res = await fetch("https://exp.host/--/api/v2/push/send", {
+      method: "POST",
+      headers,
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) return { ok: 0, gone: 0 };
+    const json = (await res.json()) as {
+      data?: Array<{ status?: string; details?: { error?: string } }>;
+    };
+    let ok = 0;
+    let gone = 0;
+    const tickets = json.data ?? [];
+    for (let i = 0; i < tickets.length; i++) {
+      const ticket = tickets[i];
+      const device = devices[i];
+      if (!ticket || !device) continue;
+      if (ticket.status === "ok") {
+        ok++;
+        continue;
+      }
+      if (ticket.details?.error === "DeviceNotRegistered") {
+        await env.DB.prepare(`DELETE FROM device_tokens WHERE id = ?`).bind(device.id).run();
+        gone++;
+      }
+    }
+    return { ok, gone };
+  } catch {
+    return { ok: 0, gone: 0 };
+  }
+}
+
 /**
  * After ingest: notify the account owner about newly arrived Imbox / Reply Later threads.
- * Dedupes per thread + cooldown; drops gone subscriptions.
+ * Dedupes per thread + cooldown; drops gone Web Push subscriptions and invalid Expo tokens.
  */
 export async function notifyNewMail(
   env: Env,
@@ -149,8 +266,8 @@ export async function notifyNewMail(
   const due = await filterNotifyCooldown(env, userId, candidates);
   if (!due.length) return { attempted: 0, notified_threads: 0, skipped: candidates.length };
 
-  const subs = await listPushSubscriptions(env, userId);
-  if (!subs.length) return { attempted: 0, notified_threads: 0, skipped: due.length };
+  const [subs, devices] = await Promise.all([listPushSubscriptions(env, userId), listDeviceTokens(env, userId)]);
+  if (!subs.length && !devices.length) return { attempted: 0, notified_threads: 0, skipped: due.length };
 
   let attempted = 0;
   for (const sub of subs) {
@@ -160,6 +277,19 @@ export async function notifyNewMail(
       continue;
     }
     if (r === "ok") attempted++;
+  }
+
+  if (devices.length) {
+    const primary = due[0];
+    const title = due.length === 1 ? "New mail" : `${due.length} new messages`;
+    const body = due.length === 1 ? "Something new in your Imbox." : "Open heyflare to catch up.";
+    const r = await sendExpoPush(env, devices, {
+      title,
+      body,
+      data: { url: `/thread/${primary}` },
+      badge: due.length,
+    });
+    attempted += r.ok;
   }
 
   const t = now();

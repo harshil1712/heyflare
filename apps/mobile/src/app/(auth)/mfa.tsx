@@ -1,30 +1,25 @@
-import { Host, Column, Text, TextInput, Button, Spacer, useNativeState } from "@expo/ui";
-import { useLocalSearchParams, useRouter } from "expo-router";
 import { useState } from "react";
+import { View } from "react-native";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import { ErrorText, Field, Muted, PrimaryButton, Screen } from "@/components/ui";
 import { useAuth } from "@/lib/auth";
 import { ApiError } from "@/lib/api";
-
-const ink = "#111111";
-const muted = "#5c5c5c";
-const danger = "#b91c1c";
 
 export default function MfaScreen() {
   const params = useLocalSearchParams<{ ticket?: string | string[] }>();
   const ticket = Array.isArray(params.ticket) ? params.ticket[0] : params.ticket;
   const { completeMfa } = useAuth();
-  const code = useNativeState("");
+  const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const router = useRouter();
 
   const onVerify = async () => {
     if (!ticket) return;
-    const codeValue = code.value.trim();
-    if (!codeValue) return;
     setBusy(true);
     setError(null);
     try {
-      await completeMfa(ticket, codeValue);
+      await completeMfa(ticket, code.trim());
       router.replace("/(app)/imbox");
     } catch (e) {
       setError(e instanceof ApiError ? e.message : e instanceof Error ? e.message : String(e));
@@ -34,15 +29,12 @@ export default function MfaScreen() {
   };
 
   return (
-    <Host style={{ flex: 1 }} matchContents={false} colorScheme="light">
-      <Column spacing={12} style={{ padding: 20 }}>
-        <Text textStyle={{ fontSize: 28, fontWeight: "600", color: ink }}>Two-factor</Text>
-        <Text textStyle={{ color: muted }}>Enter the code from your authenticator app, or a recovery code.</Text>
-        <TextInput value={code} placeholder="123456" keyboardType="number-pad" autoFocus style={{ height: 44 }} />
-        {error ? <Text textStyle={{ color: danger }}>{error}</Text> : null}
-        <Spacer />
-        <Button label={busy ? "Verifying…" : "Verify"} onPress={onVerify} disabled={busy} />
-      </Column>
-    </Host>
+    <Screen title="Two-factor" inset="auth">
+      <Muted>Enter the code from your authenticator app, or a recovery code.</Muted>
+      <Field value={code} onChangeText={setCode} placeholder="123456" keyboardType="number-pad" autoFocus />
+      {error ? <ErrorText>{error}</ErrorText> : null}
+      <View style={{ height: 8 }} />
+      <PrimaryButton label={busy ? "Verifying…" : "Verify"} onPress={onVerify} disabled={busy || !code.trim()} />
+    </Screen>
   );
 }

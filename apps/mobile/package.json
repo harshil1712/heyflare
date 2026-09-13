@@ -12,12 +12,14 @@
     "expo-glass-effect": "~56.0.4",
     "expo-image": "~56.0.12",
     "expo-linking": "~56.0.17",
+    "expo-notifications": "~56.0.25",
     "expo-router": "~56.2.20",
     "expo-secure-store": "~56.0.4",
     "expo-splash-screen": "~56.0.15",
     "expo-status-bar": "~56.0.4",
     "expo-symbols": "~56.0.7",
     "expo-system-ui": "~56.0.5",
+    "expo-updates": "~56.0.26",
     "expo-web-browser": "~56.0.6",
     "react": "19.2.3",
     "react-dom": "19.2.3",
@@ -27,6 +29,7 @@
     "react-native-safe-area-context": "~5.7.0",
     "react-native-screens": "~4.26.0",
     "react-native-web": "~0.21.0",
+    "react-native-webview": "13.16.1",
     "react-native-worklets": "0.8.3"
   },
   "devDependencies": {
@@ -38,7 +41,12 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build:ios": "eas build --platform ios --profile preview",
+    "build:ios:prod": "eas build --platform ios --profile production",
+    "build:android": "eas build --platform android --profile preview",
+    "submit:ios": "eas submit --platform ios --latest",
+    "submit:android": "eas submit --platform android --latest"
   },
   "private": true
 }

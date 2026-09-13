@@ -1,14 +1,15 @@
-# API contract (worker <-> web)
+# API contract (worker <-> web / mobile)
 
-All JSON. Auth via HttpOnly cookie `hey_session`. Errors: `{ error: string }` with 4xx/5xx.
+All JSON. Auth via HttpOnly cookie `hey_session`, **or** (native mobile) `Authorization: Bearer <session_token>` when the client sends `X-Heyflare-Client: mobile`. Errors: `{ error: string }` with 4xx/5xx.
 Account-scoped routes take the account via `X-Account-Id` header (web stores the selected account id in localStorage `hey.accountId`). If missing, worker uses the user's first account. Every account-scoped route verifies the account belongs to the session user.
 
 ## Auth (`/auth/*`, handled by worker)
 - `POST /auth/register` {email,name,password,invite?} -> {user}. First user OR email == SUPERADMIN_EMAIL becomes superadmin. If `registration_open` is '0', a valid invite code is required.
-- `POST /auth/login` {email,password} -> {user}
+- `POST /auth/login` {email,password} -> {user} (web cookie). Mobile (`X-Heyflare-Client: mobile`) also receives `{ session_token }` (and MFA ticket flow returns token after `/auth/login/2fa`).
 - `POST /auth/logout`
 - `GET  /auth/google/start` -> 302 to Google consent (scopes: gmail.modify, userinfo.email, userinfo.profile). Requires session.
-- `GET  /auth/google/callback?code&state` -> creates/updates account, 302 to `/` (or `/?connected=1`).
+- `GET  /auth/google/handoff?state=` -> start Google OAuth for Mac/mobile handoff (state minted via `POST /api/accounts/connect-link`).
+- `GET  /auth/google/callback?code&state` -> creates/updates account; web 302 to `/`; handoff returns HTML that deep-links `heyflare://oauth-complete`.
 
 ## Me / settings
 - `GET  /api/me` -> {user, accounts: Account[], registration_open}
@@ -155,6 +156,11 @@ Without `CF_API_TOKEN`, domain setup is "manual": the API returns the exact step
 - `POST /api/power-through/seen` `{ thread_ids: string[] }` -> `{ ok, count }` — marks those threads seen + read
   (max 200, ownership-checked) and clears Gmail's UNREAD label per account, best-effort. Used by "Mark all as seen";
   nothing is marked seen just by scrolling the page.
+
+## Push
+- Web Push (browsers): `GET /api/push/vapid-public-key`, `GET/POST/DELETE /api/push/subscriptions` (VAPID endpoint + keys).
+- Native (Expo → APNs/FCM): `GET/POST/DELETE /api/push/devices` with body `{ token, platform?, device_name? }` on POST/DELETE.
+  Tokens are Expo push tokens. New Imbox / Reply Later mail triggers both Web Push and Expo Push (cooldown shared via `push_notify_log`).
 
 ## Calendar
 Mounted at `/api/calendar` behind `requireUser` and, unlike mail, **not** account-scoped — the calendar belongs to the

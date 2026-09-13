@@ -1,26 +1,28 @@
-import { Host, Column, Text, TextInput, Button, Spacer, useNativeState } from "@expo/ui";
+import { useEffect, useState } from "react";
+import { View } from "react-native";
 import { useRouter } from "expo-router";
-import { useState } from "react";
+import { ErrorText, Field, Muted, PrimaryButton, Screen } from "@/components/ui";
 import { useAuth } from "@/lib/auth";
-
-const ink = "#111111";
-const muted = "#5c5c5c";
-const danger = "#b91c1c";
+import { defaultServerUrl } from "@/lib/push";
 
 export default function ServerScreen() {
   const { setServer, serverUrl } = useAuth();
-  const url = useNativeState(serverUrl ?? "");
+  const [url, setUrl] = useState(serverUrl ?? "");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const router = useRouter();
 
+  useEffect(() => {
+    if (serverUrl) return;
+    const def = defaultServerUrl();
+    if (def) setUrl(def);
+  }, [serverUrl]);
+
   const onContinue = async () => {
-    const value = url.value.trim();
-    if (!value) return;
     setBusy(true);
     setError(null);
     try {
-      await setServer(value);
+      await setServer(url);
       router.replace("/(auth)/login");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -30,25 +32,20 @@ export default function ServerScreen() {
   };
 
   return (
-    <Host style={{ flex: 1 }} matchContents={false} colorScheme="light">
-      <Column spacing={12} style={{ padding: 20 }}>
-        <Text textStyle={{ fontSize: 28, fontWeight: "600", color: ink }}>Your server</Text>
-        <Text textStyle={{ color: muted }}>
-          Enter the URL of your heyflare Worker (for example https://mail.example.com).
-        </Text>
-        <TextInput
-          value={url}
-          placeholder="https://…"
-          autoCapitalize="none"
-          autoCorrect={false}
-          keyboardType="url"
-          autoComplete="url"
-          style={{ height: 44 }}
-        />
-        {error ? <Text textStyle={{ color: danger }}>{error}</Text> : null}
-        <Spacer />
-        <Button label={busy ? "Saving…" : "Continue"} onPress={onContinue} disabled={busy} />
-      </Column>
-    </Host>
+    <Screen title="Your server" inset="auth">
+      <Muted>Enter the URL of your heyflare Worker (for example https://mail.example.com).</Muted>
+      <Field
+        value={url}
+        onChangeText={setUrl}
+        placeholder="https://mail.example.com"
+        autoCapitalize="none"
+        autoCorrect={false}
+        keyboardType="url"
+        autoComplete="url"
+      />
+      {error ? <ErrorText>{error}</ErrorText> : null}
+      <View style={{ height: 8 }} />
+      <PrimaryButton label={busy ? "Saving…" : "Continue"} onPress={onContinue} disabled={busy || !url.trim()} />
+    </Screen>
   );
 }

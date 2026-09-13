@@ -202,7 +202,9 @@ auth.get("/google/start", async (c) => {
 /** Standalone page shown in the browser tab that finished a handoff (the app is a separate window). */
 function handoffPage(title: string, detail: string, ok: boolean): string {
   const esc = (v: string) => v.replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[ch]!);
+  const deep = `heyflare://oauth-complete?ok=${ok ? "1" : "0"}`;
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="refresh" content="0;url=${esc(deep)}">
 <title>${esc(title)} · heyflare</title><style>
 :root{color-scheme:light dark}
 body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#fff;color:#37352f;
@@ -211,9 +213,13 @@ main{max-width:22rem;padding:2rem;text-align:center}
 .mark{width:40px;height:40px;border-radius:10px;background:#37352f;color:#fff;display:flex;align-items:center;
 justify-content:center;font-weight:700;margin:0 auto 1.25rem}
 h1{font-size:17px;margin:0 0 .4rem;font-weight:600}
-p{margin:0;color:rgba(55,53,47,.65)}
-@media (prefers-color-scheme:dark){body{background:#191919;color:#d4d4d4}.mark{background:#d4d4d4;color:#191919}p{color:rgba(255,255,255,.55)}}
-</style></head><body><main><div class="mark">h</div><h1>${esc(title)}</h1><p>${esc(detail)}</p></main></body></html>`;
+p{margin:0 0 1.25rem;color:rgba(55,53,47,.65)}
+a{display:inline-block;padding:.7rem 1.1rem;border-radius:10px;background:#37352f;color:#fff;text-decoration:none;font-weight:600}
+@media (prefers-color-scheme:dark){body{background:#191919;color:#d4d4d4}.mark{background:#d4d4d4;color:#191919}p{color:rgba(255,255,255,.55)}a{background:#d4d4d4;color:#191919}}
+</style>
+<script>try{location.replace(${JSON.stringify(deep)})}catch(e){}</script>
+</head><body><main><div class="mark">h</div><h1>${esc(title)}</h1><p>${esc(detail)}</p>
+<a href="${esc(deep)}">Return to heyflare</a></main></body></html>`;
 }
 
 /**
