@@ -651,6 +651,15 @@ export function PreferencesSection({ compact }: { compact?: boolean }) {
             onChange={(v) => saveSettings({ ...settings, defaultScreenTarget: v as UserSettings["defaultScreenTarget"] })}
           />
         </Row>
+        <Row
+          label="AI spam screen (custom domains)"
+          hint="Workers AI (Gemma 4) auto-screens clear spam for domain mailboxes. Gmail still uses Google's spam filter. Ambiguous mail stays in the Screener."
+        >
+          <Switch
+            checked={settings.aiSpamScreen !== false}
+            onCheckedChange={(v) => saveSettings({ ...settings, aiSpamScreen: v })}
+          />
+        </Row>
         <Row label="Undo send window" hint="Seconds to change your mind after hitting Send. 0 turns it off.">
           <div className="flex items-center gap-2">
             <Input

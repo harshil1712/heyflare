@@ -20,6 +20,8 @@ export interface Env {
   AI_MOCK?: string;
   /** Cloudflare Email Sending binding (`send_email`), when enabled on the account. */
   EMAIL?: { send(msg: any): Promise<any> };
+  /** Workers AI binding — used for domain-mailbox spam triage (Gemma 4). */
+  AI?: Ai;
   /** Per-account sync coordinator (Phase 2). */
   SYNC_ACTOR?: DurableObjectNamespace<import("./sync-actor").SyncActor>;
   /** Shared secret for Pub/Sub push verification (`?token=` or Bearer). */

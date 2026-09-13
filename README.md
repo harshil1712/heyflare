@@ -36,6 +36,7 @@ lives in a resizable side panel and can see the thread you're reading.
 ## Features
 
 - **The Screener** — every first-time sender waits for a yes/no. Decide once per person, across all your accounts.
+- **AI spam screen (custom domains)** — Workers AI (Gemma 4) auto-screens clear spam for domain mailboxes; Gmail still uses Google’s filter.
 - **Imbox, The Feed, Paper Trail** — people, newsletters, receipts. "New for you" vs "Previously seen".
 - **Power through new** — the whole "New for you" queue stacked on one page: reply, defer or file each one, `o` to start.
 - **Reply Later, Set Aside, Bubble Up** — trays docked in the Imbox, Focus & Reply mode, snooze with presets.
@@ -235,6 +236,10 @@ Connect clients to `https://YOUR_HOST/mcp` with `Authorization: Bearer hf_…`. 
 ### Web Push
 
 Optional. Set `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` (and register `public/sw.js`). New Imbox mail notifies subscribed browsers. **iOS native:** use the Expo app’s device tokens (`/api/push/devices`, migration `0022`) instead — Web Push does not replace APNs.
+
+### Custom-domain spam (Workers AI)
+
+Domain mailboxes have no Gmail spam layer. With the `AI` binding (see `wrangler.jsonc`), inbound mail is classified by **Gemma 4** (`@cf/google/gemma-4-26b-a4b-it`). Clear spam is auto-moved to Screened out; `ham` / `unsure` still go through the Screener. Toggle under Settings → Mail (`aiSpamScreen`, default on). Requires Workers AI usage on your account.
 
 ### Attachments (R2) and retention
 

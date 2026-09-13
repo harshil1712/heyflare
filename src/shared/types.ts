@@ -23,6 +23,11 @@ export interface UserSettings {
   paperTrailRetentionDays?: number;
   /** Days to keep Trash threads (0 = forever). */
   trashRetentionDays?: number;
+  /**
+   * Custom-domain inbound: use Workers AI (Gemma 4) to auto screen-out clear spam.
+   * Default on when unset. Gmail still uses Google's SPAM label instead.
+   */
+  aiSpamScreen?: boolean;
 }
 
 export interface Account {

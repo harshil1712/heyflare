@@ -79,6 +79,10 @@ export default function SettingsScreen() {
           Push uses Expo → APNs. Requires a production/preview EAS build (not Expo Go) and a deployed Worker with
           migration 0022.
         </Muted>
+        <Muted>
+          Custom-domain spam screening uses Workers AI (Gemma 4) when enabled in web Settings → Mail. Toggle it there;
+          Gmail still relies on Google’s spam filter.
+        </Muted>
 
         <SectionLabel>Session</SectionLabel>
         <PrimaryButton

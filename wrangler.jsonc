@@ -27,6 +27,10 @@
     "APP_NAME": "heyflare",
     "WORKER_NAME": "heyflare"
   },
+  "ai": {
+    "binding": "AI",
+    "remote": true
+  },
   "durable_objects": {
     "bindings": [{ "name": "SYNC_ACTOR", "class_name": "SyncActor" }]
   },

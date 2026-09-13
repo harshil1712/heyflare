@@ -7,6 +7,7 @@ import { ingestParsed, type IngestOptions } from "./sync";
 import { parseAddressList, type ParsedMessage, type ParsedAttachment } from "./mime";
 import { htmlToText } from "./sanitize";
 import type { Address } from "@shared/types";
+import { maybeAutoScreenSpam } from "./ai/spam";
 
 const MAX_RAW = 25 * 1024 * 1024;
 const MAX_BLOB = 900 * 1024;
@@ -121,6 +122,10 @@ export async function deliverInbound(env: Env, account: AccountRow, parsed: Omit
   if (parsed.messageId) {
     const dup = await db.prepare(`SELECT id FROM messages WHERE account_id = ? AND (message_id_header = ? OR gmail_message_id = ?) LIMIT 1`).bind(account.id, parsed.messageId, parsed.gmailId).first();
     if (dup) return { added: 0, threadIds: [] };
+  }
+  const spam = await maybeAutoScreenSpam(env, account, parsed);
+  if (spam === "spam") {
+    await logSync(db, account.id, "info", `AI spam screen-out: ${parsed.from.email} — ${parsed.subject.slice(0, 80)}`);
   }
   const threadId = (await threadKeyFor(db, account.id, parsed.inReplyTo, parsed.references)) ?? uid();
   const full: ParsedMessage = { ...parsed, threadId };
