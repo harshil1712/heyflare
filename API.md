@@ -159,7 +159,7 @@ Without `CF_API_TOKEN`, domain setup is "manual": the API returns the exact step
   nothing is marked seen just by scrolling the page.
 
 ## Push
-- Web Push (browsers): `GET /api/push/vapid-public-key`, `GET/POST/DELETE /api/push/subscriptions` (VAPID endpoint + keys).
+- Web Push (PWA): `GET /api/push/vapid-public-key`, `GET/POST/DELETE /api/push/subscriptions` (VAPID endpoint + keys). Client registers `/sw.js` and toggles from Settings → Preferences. Payload is aes128gcm (works with iOS Home Screen PWAs).
 - Native (Expo → APNs/FCM): `GET/POST/DELETE /api/push/devices` with body `{ token, platform?, device_name? }` on POST/DELETE.
   Tokens are Expo push tokens. New Imbox / Reply Later mail triggers both Web Push and Expo Push (cooldown shared via `push_notify_log`).
 

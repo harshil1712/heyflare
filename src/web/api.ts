@@ -78,7 +78,7 @@ export const api = {
   get: <R>(path: string) => request<R>("GET", path),
   post: <R>(path: string, body?: unknown) => request<R>("POST", path, body ?? {}),
   patch: <R>(path: string, body?: unknown) => request<R>("PATCH", path, body ?? {}),
-  del: <R>(path: string) => request<R>("DELETE", path),
+  del: <R>(path: string, body?: unknown) => request<R>("DELETE", path, body),
 };
 
 export function qs(params: Record<string, string | number | undefined | null>): string {

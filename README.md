@@ -233,9 +233,13 @@ This fork exposes mail tools over **stateless Streamable HTTP MCP** at `/mcp` (M
 
 Connect clients to `https://YOUR_HOST/mcp` with `Authorization: Bearer hf_…`. Modern clients may send `MCP-Protocol-Version` / `Mcp-Method` headers; older Streamable HTTP clients still work via the dual-era handler.
 
-### Web Push
+### Web Push (PWA)
 
-Optional. Set `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` (and register `public/sw.js`). New Imbox mail notifies subscribed browsers. **iOS native:** use the Expo app’s device tokens (`/api/push/devices`, migration `0022`) instead — Web Push does not replace APNs.
+Optional. Generate keys with `node scripts/gen-vapid.mjs`, then set Worker secrets `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, and optionally `VAPID_SUBJECT` (e.g. `mailto:you@example.com`).
+
+The web app registers `/sw.js`, exposes an installable `manifest.webmanifest`, and lets you enable notifications under **Settings → Preferences**. New **Imbox** mail notifies subscribed browsers (Screener stays quiet until you let the sender in).
+
+Works on desktop, Android, and **iOS Home Screen PWAs** (Share → Add to Home Screen, then open from the icon). In-Safari tabs on iPhone cannot subscribe — the Preferences toggle explains that.
 
 ### Custom-domain spam (Workers AI)
 

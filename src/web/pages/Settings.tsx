@@ -30,6 +30,7 @@ import { AiSection } from "../components/AiSettingsSection";
 import { CalendarSettingsSection } from "../components/CalendarSettingsSection";
 import { McpTokensSection } from "../components/McpTokensSection";
 import { useCardScroll } from "../lib/cardKeys";
+import { disableWebPush, enableWebPush, getWebPushState, type WebPushUiState } from "../lib/push";
 
 type Tab = "profile" | "preferences" | "accounts" | "domains" | "calendar" | "ai" | "security";
 const TABS: { key: Tab; label: string; icon: React.ReactNode }[] = [
@@ -604,6 +605,72 @@ export function ProfileSection({ compact }: { compact?: boolean }) {
   );
 }
 
+function NotificationsSection({ compact }: { compact?: boolean }) {
+  const [state, setState] = useState<WebPushUiState>("loading");
+  const [busy, setBusy] = useState(false);
+  const refresh = () => {
+    void getWebPushState().then(setState).catch(() => setState("unsupported"));
+  };
+  useEffect(() => {
+    refresh();
+  }, []);
+
+  const hint = (() => {
+    switch (state) {
+      case "loading":
+        return "Checking this device…";
+      case "unsupported":
+        return "This browser can't receive Web Push notifications.";
+      case "needs_install":
+        return "On iPhone/iPad: Share → Add to Home Screen, then open heyflare from the icon and enable here.";
+      case "unconfigured":
+        return "This server has no VAPID keys yet (set VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY).";
+      case "denied":
+        return "Notifications are blocked for this site. Allow them in browser settings, then try again.";
+      case "on":
+        return "You'll get a ping for new Imbox mail (not Screener). Same rules as before.";
+      case "off":
+        return "New Imbox mail can wake this device. Screener still stays quiet until you let someone in.";
+      default:
+        return "";
+    }
+  })();
+
+  const canToggle = state === "on" || state === "off";
+  const checked = state === "on";
+
+  const onToggle = async (next: boolean) => {
+    setBusy(true);
+    try {
+      if (next) await enableWebPush();
+      else await disableWebPush();
+      refresh();
+      toast.success(next ? "Notifications on" : "Notifications off");
+    } catch (e) {
+      toast.error((e as Error).message);
+      refresh();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Section title="Notifications">
+      <Row label="New Imbox mail" hint={hint}>
+        {state === "loading" ? (
+          <Skeleton className={cn("h-5 w-9 rounded-full", compact && "h-6 w-11")} />
+        ) : canToggle ? (
+          <Switch checked={checked} disabled={busy} onCheckedChange={(v) => void onToggle(v)} />
+        ) : (
+          <Badge variant="secondary" className="font-normal">
+            {state === "needs_install" ? "Install first" : state === "unconfigured" ? "Not set up" : state === "denied" ? "Blocked" : "Unavailable"}
+          </Badge>
+        )}
+      </Row>
+    </Section>
+  );
+}
+
 export function PreferencesSection({ compact }: { compact?: boolean }) {
   const { user } = useAccount();
   const { update } = useMeMutations();
@@ -637,6 +704,7 @@ export function PreferencesSection({ compact }: { compact?: boolean }) {
           <Switch checked={settings.showPreviews !== false} onCheckedChange={(v) => saveSettings({ ...settings, showPreviews: v })} />
         </Row>
       </Section>
+      <NotificationsSection compact={compact} />
       <Section title="Mail" actions={<SavedMark show={prefSaved} />}>
         <Row label="Default place for new senders" hint="Pre-selected when you say yes in the Screener.">
           <Toggle

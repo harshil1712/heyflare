@@ -7,7 +7,9 @@ GOOGLE_CLIENT_SECRET=
 # PUBSUB_VERIFICATION_TOKEN=long-random-string
 # GMAIL_PUBSUB_TOPIC=projects/YOUR_PROJECT/topics/heyflare-mail
 
-# Phase 4 — Web Push (optional; Android/desktop PWA only — not iOS WKWebView)
+# Phase 4 — Web Push (PWA: desktop, Android, iOS Home Screen)
+# Generate with: node scripts/gen-vapid.mjs
+# Public = base64url uncompressed P-256; private = JWK `d` (not PKCS8).
 # VAPID_PUBLIC_KEY=
 # VAPID_PRIVATE_KEY=
 # VAPID_SUBJECT=mailto:you@example.com

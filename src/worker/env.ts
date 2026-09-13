@@ -28,7 +28,7 @@ export interface Env {
   PUBSUB_VERIFICATION_TOKEN?: string;
   /** Gmail users.watch topic, e.g. `projects/my-proj/topics/heyflare-mail`. */
   GMAIL_PUBSUB_TOPIC?: string;
-  /** Web Push VAPID keys (Phase 4). Public key is applicationServerKey; private is PKCS8 base64. */
+  /** Web Push VAPID keys. Public = base64url uncompressed P-256; private = JWK `d` (scripts/gen-vapid.mjs). */
   VAPID_PUBLIC_KEY?: string;
   VAPID_PRIVATE_KEY?: string;
   VAPID_SUBJECT?: string;

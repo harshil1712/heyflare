@@ -158,8 +158,18 @@
 
 /* Mobile: no browser pull-to-refresh / rubber-banding fighting our gestures. */
 @media (max-width: 767px) {
-  html, body { overscroll-behavior-y: none; }
+  html, body {
+    overscroll-behavior-y: none;
+    overflow-x: hidden;
+    max-width: 100%;
+  }
   html { -webkit-text-size-adjust: 100%; }
+  #root { min-width: 0; max-width: 100%; }
+}
+
+/* Installed PWA: fill the display without browser chrome quirks. */
+@media (display-mode: standalone) {
+  html, body { min-height: 100dvh; }
 }
 
 @utility row-out { animation: row-out 0.12s ease-in forwards; overflow: hidden; pointer-events: none; }

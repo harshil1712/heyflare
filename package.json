@@ -12,6 +12,7 @@
     "test": "node scripts/ensure-dist.mjs && vitest run",
     "deploy": "npm run build && wrangler deploy",
     "deploy:mine": "npm run build && wrangler deploy -c wrangler.local.jsonc",
+    "vapid": "node scripts/gen-vapid.mjs",
     "db:migrate:local": "wrangler d1 migrations apply heyflare-db --local",
     "db:migrate": "wrangler d1 migrations apply heyflare-db --remote",
     "db:migrate:mine": "wrangler d1 migrations apply hey-db --remote -c wrangler.local.jsonc",
@@ -19,6 +20,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.123.0",
+    "@block65/webcrypto-web-push": "^2.0.0",
     "@fontsource-variable/geist": "^5.3.0",
     "@fontsource-variable/geist-mono": "^5.3.0",
     "@modelcontextprotocol/core": "^2.0.0",

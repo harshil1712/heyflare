@@ -1,13 +1,45 @@
-/* heyflare service worker — Web Push (Android / desktop PWA). iOS WKWebView is not supported. */
+/* heyflare service worker — installable PWA + Web Push (desktop, Android, iOS Home Screen). */
+const SW_VERSION = "heyflare-sw-v1";
+
+self.addEventListener("install", (event) => {
+  event.waitUntil(self.skipWaiting());
+});
+
+self.addEventListener("activate", (event) => {
+  event.waitUntil(self.clients.claim());
+});
+
 self.addEventListener("push", (event) => {
-  const title = "New mail";
-  const options = {
-    body: "Something new landed in your Imbox",
-    icon: "/favicon.svg",
-    badge: "/favicon.svg",
-    data: { url: "/" },
-  };
-  event.waitUntil(self.registration.showNotification(title, options));
+  event.waitUntil(
+    (async () => {
+      let title = "New mail";
+      let body = "Something new landed in your Imbox";
+      let data = { url: "/" };
+      try {
+        if (event.data) {
+          const raw = event.data.json();
+          if (raw && typeof raw === "object") {
+            if (typeof raw.title === "string" && raw.title) title = raw.title;
+            if (typeof raw.body === "string" && raw.body) body = raw.body;
+            if (raw.data && typeof raw.data === "object") data = { ...data, ...raw.data };
+          }
+        }
+      } catch {
+        try {
+          const text = event.data?.text?.();
+          if (text) body = text;
+        } catch {
+          /* keep defaults */
+        }
+      }
+      await self.registration.showNotification(title, {
+        body,
+        icon: "/icon-192.png",
+        badge: "/icon-192.png",
+        data,
+      });
+    })()
+  );
 });
 
 self.addEventListener("notificationclick", (event) => {
@@ -25,3 +57,6 @@ self.addEventListener("notificationclick", (event) => {
     })
   );
 });
+
+// Keep the SW file referenced so bundlers/CDNs don't drop it; version bumps on deploy.
+void SW_VERSION;

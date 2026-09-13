@@ -55,6 +55,10 @@ function applyTheme(theme: "light" | "dark" | "system") {
   const dark = theme === "dark" || (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
   root.classList.toggle("dark", dark);
   root.setAttribute("data-theme", theme);
+  const color = dark ? "#191919" : "#ffffff";
+  for (const meta of document.querySelectorAll('meta[name="theme-color"]')) {
+    meta.setAttribute("content", color);
+  }
 }
 
 

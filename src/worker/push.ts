@@ -16,17 +16,6 @@ export interface PushSubRow {
   last_seen_at: number;
 }
 
-function b64url(bytes: ArrayBuffer | Uint8Array): string {
-  const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
-  let s = "";
-  for (const b of u8) s += String.fromCharCode(b);
-  return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
-
-function b64urlJson(obj: unknown): string {
-  return b64url(new TextEncoder().encode(JSON.stringify(obj)));
-}
-
 /** Threads that should wake the user's phone: new Imbox (or Reply Later tray). */
 export function threadsToNotify(threads: Pick<ThreadRow, "id" | "bucket" | "seen" | "reply_later" | "is_sent_only">[]): string[] {
   return threads
@@ -90,44 +79,39 @@ export async function filterNotifyCooldown(env: Env, userId: string, threadIds: 
   return out;
 }
 
-async function importVapidPrivateKey(pemOrB64: string): Promise<CryptoKey> {
-  // Expect raw PKCS8 base64 (no PEM headers) or full PEM.
-  const cleaned = pemOrB64.replace(/-----[^-]+-----/g, "").replace(/\s+/g, "");
-  const bin = Uint8Array.from(atob(cleaned), (c) => c.charCodeAt(0));
-  return crypto.subtle.importKey("pkcs8", bin, { name: "ECDSA", namedCurve: "P-256" }, false, ["sign"]);
-}
+export type WebPushMessage = { title: string; body: string; data?: Record<string, string> };
 
-async function vapidAuthHeader(env: Env, endpoint: string): Promise<string | null> {
+/**
+ * Encrypted Web Push (RFC 8291 aes128gcm + VAPID). Works with Chrome, Firefox, Android, and iOS Home Screen PWAs.
+ * VAPID_PUBLIC_KEY = base64url uncompressed P-256 point; VAPID_PRIVATE_KEY = JWK `d` (see scripts/gen-vapid.mjs).
+ */
+export async function sendPush(
+  env: Env,
+  sub: PushSubRow,
+  message: WebPushMessage = { title: "New mail", body: "Something new landed in your Imbox", data: { url: "/" } }
+): Promise<"ok" | "gone" | "skip" | "error"> {
   const priv = env.VAPID_PRIVATE_KEY;
   const pub = env.VAPID_PUBLIC_KEY;
-  const sub = env.VAPID_SUBJECT || "mailto:owner@heyflare.local";
-  if (!priv || !pub) return null;
-  const audience = new URL(endpoint).origin;
-  const key = await importVapidPrivateKey(priv);
-  const header = b64urlJson({ typ: "JWT", alg: "ES256" });
-  const exp = Math.floor(Date.now() / 1000) + 12 * 3600;
-  const payload = b64urlJson({ aud: audience, exp, sub });
-  const data = new TextEncoder().encode(`${header}.${payload}`);
-  const sig = await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, key, data);
-  // Convert IEEE P1363 sig to... WebCrypto ECDSA gives P1363 already; JWT wants that raw r||s.
-  const jwt = `${header}.${payload}.${b64url(sig)}`;
-  return `vapid t=${jwt}, k=${pub}`;
-}
-
-/** Send an empty (or minimal) Web Push; SW paints the notification. Returns false if unconfigured / gone. */
-export async function sendPush(env: Env, sub: PushSubRow): Promise<"ok" | "gone" | "skip" | "error"> {
-  const auth = await vapidAuthHeader(env, sub.endpoint).catch(() => null);
-  if (!auth) return "skip";
+  if (!priv || !pub) return "skip";
   try {
-    const res = await fetch(sub.endpoint, {
-      method: "POST",
-      headers: {
-        authorization: auth,
-        ttl: "60",
-        urgency: "high",
-        "content-length": "0",
+    const { buildPushPayload } = await import("@block65/webcrypto-web-push");
+    const payload = await buildPushPayload(
+      {
+        data: {
+          title: message.title,
+          body: message.body,
+          data: message.data ?? { url: "/" },
+        },
+        options: { ttl: 60, urgency: "high" },
       },
-    });
+      { endpoint: sub.endpoint, expirationTime: null, keys: { p256dh: sub.p256dh, auth: sub.auth } },
+      {
+        subject: env.VAPID_SUBJECT || "mailto:owner@heyflare.local",
+        publicKey: pub,
+        privateKey: priv,
+      }
+    );
+    const res = await fetch(sub.endpoint, payload);
     if (res.status === 404 || res.status === 410) return "gone";
     if (!res.ok) return "error";
     return "ok";
@@ -269,9 +253,14 @@ export async function notifyNewMail(
   const [subs, devices] = await Promise.all([listPushSubscriptions(env, userId), listDeviceTokens(env, userId)]);
   if (!subs.length && !devices.length) return { attempted: 0, notified_threads: 0, skipped: due.length };
 
+  const primary = due[0];
+  const title = due.length === 1 ? "New mail" : `${due.length} new messages`;
+  const body = due.length === 1 ? "Something new in your Imbox." : "Open heyflare to catch up.";
+  const pushMessage: WebPushMessage = { title, body, data: { url: `/t/${primary}` } };
+
   let attempted = 0;
   for (const sub of subs) {
-    const r = await sendPush(env, sub);
+    const r = await sendPush(env, sub, pushMessage);
     if (r === "gone") {
       await env.DB.prepare(`DELETE FROM push_subscriptions WHERE id = ?`).bind(sub.id).run();
       continue;
@@ -280,13 +269,10 @@ export async function notifyNewMail(
   }
 
   if (devices.length) {
-    const primary = due[0];
-    const title = due.length === 1 ? "New mail" : `${due.length} new messages`;
-    const body = due.length === 1 ? "Something new in your Imbox." : "Open heyflare to catch up.";
     const r = await sendExpoPush(env, devices, {
       title,
       body,
-      data: { url: `/thread/${primary}` },
+      data: { url: `/t/${primary}` },
       badge: due.length,
     });
     attempted += r.ok;
