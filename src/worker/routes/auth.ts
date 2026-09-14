@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import type { AppEnv } from "../env";
 import type { UserRow, AccountRow } from "../db";
 import { uid, now, toUser } from "../db";
-import { hashPassword, verifyPassword, createSession, destroySession, getSessionUser, isMobileClient } from "../auth";
+import { hashPassword, verifyPassword, createSession, destroySession, getSessionUser } from "../auth";
 import { googleAuthUrl, googleConfigured, exchangeCode, fetchUserInfo, type GoogleScopeMode } from "../google";
 import { ensureDefaultCalendars } from "../calendar/sources";
 import { verifyTotp, matchRecoveryCode } from "../totp";
@@ -74,8 +74,8 @@ auth.post("/setup", async (c) => {
     .prepare(`INSERT INTO users (id, email, name, password_hash, role, disabled, settings_json, created_at, last_login_at) VALUES (?, ?, ?, ?, ?, 0, '{}', ?, ?)`)
     .bind(user.id, user.email, user.name, user.password_hash, user.role, user.created_at, user.last_login_at)
     .run();
-  const sessionId = await createSession(c, user.id);
-  return c.json(isMobileClient(c) ? { user: toUser(user), session_token: sessionId } : { user: toUser(user) });
+  await createSession(c, user.id);
+  return c.json({ user: toUser(user) });
 });
 
 auth.post("/login", async (c) => {
@@ -103,8 +103,8 @@ auth.post("/login", async (c) => {
   }
   await clearLoginLimits(db, ip, email);
   await db.prepare(`UPDATE users SET last_login_at = ? WHERE id = ?`).bind(t, user.id).run();
-  const sessionId = await createSession(c, user.id);
-  return c.json(isMobileClient(c) ? { user: toUser(user), session_token: sessionId } : { user: toUser(user) });
+  await createSession(c, user.id);
+  return c.json({ user: toUser(user) });
 });
 
 const MFA_MAX_ATTEMPTS = 6;
@@ -143,8 +143,8 @@ auth.post("/login/2fa", async (c) => {
     db.prepare(`DELETE FROM mfa_tickets WHERE id = ?`).bind(ticket.id),
     db.prepare(`UPDATE users SET last_login_at = ? WHERE id = ?`).bind(t, user.id),
   ]);
-  const sessionId = await createSession(c, user.id);
-  return c.json(isMobileClient(c) ? { user: toUser(user), session_token: sessionId } : { user: toUser(user) });
+  await createSession(c, user.id);
+  return c.json({ user: toUser(user) });
 });
 
 auth.post("/logout", async (c) => {

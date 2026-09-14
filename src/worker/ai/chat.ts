@@ -7,8 +7,6 @@ import { type AiConfig } from "./provider";
 import { completeAi } from "./model";
 import { htmlToText } from "../sanitize";
 
-export { completeAi } from "./model";
-
 export interface ChatDeps {
   env: Env;
   user: UserRow;

@@ -1,16 +1,14 @@
 // AI settings / presets. Chat + complete use getLanguageModel (model.ts) + AI SDK.
 import { getSessionSecret } from "../secrets";
-import Anthropic from "@anthropic-ai/sdk";
 import type { Env } from "../env";
 import { decryptSecret } from "./crypto";
-import { OpenAiApiError, describeOpenAiError } from "./openai";
 import { WORKERS_AI_DEFAULT_MODEL, describeWorkersAiError } from "./workers-ai";
 
 /* ---------- presets ---------- */
 
-export type ProviderKind = "anthropic" | "openai_compatible" | "mock" | "workers_ai";
+export type ProviderKind = "anthropic" | "openai_compatible" | "workers_ai";
 export interface Preset {
-  id: "workers_ai" | "anthropic" | "openai" | "xai" | "openrouter" | "gemini" | "custom" | "mock";
+  id: "workers_ai" | "anthropic" | "openai" | "xai" | "openrouter" | "gemini" | "custom";
   label: string;
   kind: ProviderKind;
   base_url: string;
@@ -38,13 +36,8 @@ export const PRESETS: Preset[] = [
   { id: "custom", label: "Custom (OpenAI-compatible)", kind: "openai_compatible", base_url: "", default_model: "", models: ["llama3.1", "mistral", "qwen2.5"], key_placeholder: "API key (optional for local servers)" },
 ];
 export const DEFAULT_MODEL = WORKERS_AI_DEFAULT_MODEL;
-export const MODELS = PRESETS[0].models.map((id) => ({ id, label: id }));
-
-/** Hidden test provider: streams a canned answer and calls one tool. Only usable when env.AI_MOCK === "1". */
-export const MOCK_PRESET: Preset = { id: "mock", label: "Mock (testing)", kind: "mock", base_url: "", default_model: "mock-1", models: ["mock-1"], key_placeholder: "not needed" };
 
 export function presetById(id: string): Preset {
-  if (id === "mock") return MOCK_PRESET;
   return PRESETS.find((p) => p.id === id) ?? PRESETS[0];
 }
 
@@ -96,9 +89,17 @@ export async function loadAiConfig(env: Env, userId: string): Promise<AiConfig |
   }
 
   const preset = presetById(row.preset || (row.provider === "anthropic" ? "anthropic" : row.provider === "workers_ai" ? "workers_ai" : "custom"));
-  if (preset.kind === "mock") {
-    if (env.AI_MOCK !== "1") return null;
-    return { provider: "mock", preset: "mock", baseUrl: "", apiKey: "", model: row.model || preset.default_model, learn: !!row.learn, autoSend: !!row.auto_send };
+  // Legacy rows may still say "mock" — fall back to Workers AI when available.
+  if ((row.preset === "mock" || (row.provider as string) === "mock") && fallbackWorkers) {
+    return {
+      provider: "workers_ai",
+      preset: "workers_ai",
+      baseUrl: "",
+      apiKey: "",
+      model: DEFAULT_MODEL,
+      learn: !!row.learn,
+      autoSend: !!row.auto_send,
+    };
   }
   if (preset.kind === "workers_ai") {
     if (!env.AI) return null;
@@ -155,16 +156,11 @@ export class AiNotConfigured extends Error {
 /** Friendly message for API failures shown in the UI. */
 export function describeApiError(e: unknown): string {
   if (e instanceof AiNotConfigured) return "AI isn't available — bind Workers AI (env.AI) or set a provider in Settings → AI.";
-  if (e instanceof OpenAiApiError) return describeOpenAiError(e);
-  const raw = String((e as Error)?.message ?? e);
-  if (/Workers AI|workers-ai|@cf\//i.test(raw) || /Workers Paid/i.test(raw)) return describeWorkersAiError(e);
-  if (e instanceof Anthropic.AuthenticationError) return "The API key was rejected. Check it in Settings → AI.";
-  if (e instanceof Anthropic.PermissionDeniedError) return "This key isn't allowed to use that model.";
-  if (e instanceof Anthropic.RateLimitError) return "Rate limited by the provider. Try again in a moment.";
-  if (e instanceof Anthropic.BadRequestError) return `The provider rejected the request: ${e.message.slice(0, 200)}`;
-  if (e instanceof Anthropic.APIError) return `Provider error ${e.status ?? ""}: ${e.message.slice(0, 200)}`;
   const msg = (e as Error)?.message ?? String(e);
+  if (/Workers AI|workers-ai|@cf\//i.test(msg) || /Workers Paid/i.test(msg)) return describeWorkersAiError(e);
+  if (/authentication|invalid.?api.?key|unauthorized|401/i.test(msg)) return "The API key was rejected. Check it in Settings → AI.";
+  if (/permission|403|forbidden/i.test(msg)) return "This key isn't allowed to use that model.";
+  if (/rate.?limit|429/i.test(msg)) return "Rate limited by the provider. Try again in a moment.";
   if (msg === "session_secret_missing") return "SESSION_SECRET is not set on the server, so keys can't be decrypted.";
-  if (/mock_provider_not_for_language_model/i.test(msg)) return "Mock provider isn't available here.";
   return msg.slice(0, 300);
 }

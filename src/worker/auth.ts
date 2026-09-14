@@ -67,11 +67,6 @@ export async function createSession(c: Context<AppEnv>, userId: string): Promise
   return id;
 }
 
-/** True when the client is the Expo / native app (needs session_token in JSON; cookies alone are awkward). */
-export function isMobileClient(c: Context<AppEnv>): boolean {
-  return (c.req.header("x-heyflare-client") ?? "").toLowerCase() === "mobile";
-}
-
 export async function destroySession(c: Context<AppEnv>) {
   const id = getSessionId(c);
   if (id) await c.env.DB.prepare(`DELETE FROM sessions WHERE id = ?`).bind(id).run();

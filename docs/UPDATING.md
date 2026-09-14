@@ -17,16 +17,6 @@ manual `db:migrate` step. Migrations only add tables and columns, so existing ro
 
 ## Update your server
 
-Pick the line that matches how you installed it.
-
-### Created with `npm create heyflare`
-
-```sh
-npx create-heyflare deploy
-```
-
-Reuses the `wrangler.local.jsonc` already in the project: same Worker, same database, same secrets.
-
 ### Cloned the repo
 
 ```sh
@@ -44,23 +34,10 @@ git merge upstream/main
 git push
 ```
 
-## Update the Mac app
-
-Open the sidebar's **Update available** row (or **heyflare → Check for Updates…**) and press
-**Update and restart**. The app downloads the new build, installs it and relaunches itself — your server,
-window size and login are all kept.
-
-You can also download the DMG from the [latest release](https://github.com/doable-team/heyflare/releases/latest)
-and drag it over the old app.
-
-The Mac app and the server update independently: the app is only a native window around your server, so
-either can be newer than the other.
-
 ## Which version am I running?
 
 - The sidebar shows an **Update available** row when a newer release exists.
 - `https://your-host/api/version` returns the version, the commit it was built from, and the build time.
-- The Mac app's version is in **heyflare → About heyflare**.
 
 ## Rolling back
 
@@ -85,8 +62,7 @@ keeps working against a newer database.
 
 ## If something looks wrong
 
-- **Old UI after updating** — the browser cached the assets. Hard-refresh with `⌘⇧R` (`Ctrl+Shift+R` on
-  Windows/Linux), or `⌘R` in the Mac app.
+- **Old UI after updating** — the browser cached the assets. Hard-refresh with `⌘⇧R` (`Ctrl+Shift+R` on Windows/Linux).
 - **Errors after a deploy** — check the live logs: `npx wrangler tail -c wrangler.local.jsonc`, or the
   Worker's **Logs** tab in the dashboard.
 - **A deploy half-finished** — run the deploy command again. Deploys replace the whole Worker, so a repeat

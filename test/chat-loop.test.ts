@@ -6,7 +6,6 @@ const ctx: ToolContext = {
   user: { id: "u", email: "a@b.c", name: "" },
   accounts: [],
   autoSend: false,
-  emit: () => {},
 };
 
 describe("assistant tools", () => {

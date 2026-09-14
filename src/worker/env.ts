@@ -16,8 +16,6 @@ export interface Env {
   WORKER_NAME?: string;
   /** Resend API key: outbound fallback for custom-domain mailboxes. */
   RESEND_API_KEY?: string;
-  /** "1" enables the hidden mock AI provider (local testing only). */
-  AI_MOCK?: string;
   /** Cloudflare Email Sending binding (`send_email`), when enabled on the account. */
   EMAIL?: { send(msg: any): Promise<any> };
   /** Workers AI binding — spam triage + assistant (via workers-ai-provider). */
@@ -34,8 +32,6 @@ export interface Env {
   VAPID_PUBLIC_KEY?: string;
   VAPID_PRIVATE_KEY?: string;
   VAPID_SUBJECT?: string;
-  /** Optional Expo access token for higher Expo Push API rate limits (EAS → credentials). */
-  EXPO_ACCESS_TOKEN?: string;
   /** Large domain-mail attachment blobs (Phase 6). */
   ATTACHMENTS?: R2Bucket;
 }

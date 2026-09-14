@@ -4,7 +4,7 @@ import type { AppEnv } from "../env";
 import type { AccountRow, ThreadRow } from "../db";
 import { uid, now, accountForThread } from "../db";
 import { encryptSecret } from "../ai/crypto";
-import { PRESETS, MOCK_PRESET, presetById, loadAiSettings, loadAiConfig, describeApiError, AiNotConfigured } from "../ai/provider";
+import { PRESETS, presetById, loadAiSettings, loadAiConfig, describeApiError, AiNotConfigured } from "../ai/provider";
 import { listMemory, addMemory, updateMemory, deleteMemory, clearMemory, learnFromMail, type MemoryKind } from "../ai/memory";
 import { generateReply, summarizeThread, threadToText, type ChatDeps, type ReplyTone } from "../ai/chat";
 import { completeAi } from "../ai/model";
@@ -32,15 +32,14 @@ ai.get("/settings", async (c) => {
   const state = await c.env.DB.prepare(`SELECT last_learned_at FROM ai_learning_state WHERE user_id = ?`).bind(user.id).first<{ last_learned_at: number | null }>();
   const workersOk = !!c.env.AI;
   const defaultPreset = workersOk ? "workers_ai" : "anthropic";
-  const preset = presetById(row?.preset ?? defaultPreset);
-  const mockOk = c.env.AI_MOCK === "1";
+  const preset = presetById(row?.preset === "mock" ? "workers_ai" : row?.preset ?? defaultPreset);
   const configured =
     preset.kind === "workers_ai"
       ? workersOk
-      : !!row && (preset.kind === "mock" ? mockOk : preset.kind === "anthropic" ? !!row.api_key_enc : preset.id === "custom" ? !!row.base_url : !!row.api_key_enc);
+      : !!row && (preset.kind === "anthropic" ? !!row.api_key_enc : preset.id === "custom" ? !!row.base_url : !!row.api_key_enc);
   // If nothing configured but Workers AI is bound, treat as ready (zero-config).
   const effectivelyConfigured = configured || (workersOk && (!row || !row.api_key_enc));
-  const presets = mockOk ? [...PRESETS, MOCK_PRESET] : PRESETS.filter((p) => (p.id === "workers_ai" ? workersOk : true));
+  const presets = PRESETS.filter((p) => (p.id === "workers_ai" ? workersOk : true));
   return c.json({
     configured: effectivelyConfigured,
     provider: effectivelyConfigured && !configured && workersOk ? "workers_ai" : preset.kind,
@@ -62,7 +61,7 @@ ai.put("/settings", async (c) => {
   const b = await c.req.json<{ preset?: string; base_url?: string; api_key?: string | null; model?: string; learn?: boolean; auto_send?: boolean }>().catch(() => ({}) as any);
   const cur = await loadAiSettings(c.env, user.id);
   const wantedPreset = typeof b.preset === "string" ? b.preset : cur?.preset ?? (c.env.AI ? "workers_ai" : "anthropic");
-  if (wantedPreset === "mock" && c.env.AI_MOCK !== "1") return c.json({ error: "unknown_preset" }, 400);
+  if (wantedPreset === "mock") return c.json({ error: "unknown_preset" }, 400);
   if (wantedPreset === "workers_ai" && !c.env.AI) return c.json({ error: "workers_ai_unavailable" }, 400);
   const preset = presetById(wantedPreset);
   let enc = cur?.api_key_enc ?? "";
@@ -167,7 +166,6 @@ ai.delete("/conversations/:id", async (c) => {
   const userId = c.get("user").id;
   const own = await c.env.DB.prepare(`SELECT id FROM ai_conversations WHERE id = ? AND user_id = ?`).bind(id, userId).first();
   if (!own) return c.json({ error: "not_found" }, 404);
-  await c.env.DB.prepare(`DELETE FROM ai_messages WHERE conversation_id = ?`).bind(id).run();
   await c.env.DB.prepare(`DELETE FROM ai_conversations WHERE id = ? AND user_id = ?`).bind(id, userId).run();
   return c.json({ ok: true });
 });

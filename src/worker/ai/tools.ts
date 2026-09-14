@@ -18,8 +18,6 @@ export interface ToolContext {
   user: { id: string; email: string; name: string };
   accounts: AccountRow[];
   autoSend: boolean;
-  /** Streams a UI event (draft cards etc.). */
-  emit: (event: { type: string; [k: string]: unknown }) => void;
   waitUntil?: (p: Promise<unknown>) => void;
 }
 
@@ -484,7 +482,6 @@ export async function runTool(ctx: ToolContext, name: string, rawInput: unknown)
         .bind(id, acc.id, threadId, replyTo?.id ?? null, JSON.stringify(to), JSON.stringify(cc), subject.slice(0, 500), html.slice(0, 500_000), t, t)
         .run();
       const draft = { draft_id: id, account_id: acc.id, from: acc.email, thread_id: threadId, to, cc, subject, body_text: bodyText };
-      ctx.emit({ type: "draft", draft });
       return ok({ ...draft, note: ctx.autoSend ? "You may call send_draft." : "The user will review and press Send." }, `Drafted “${subject}” to ${to.map((a) => a.email).join(", ")}`);
     }
     case "send_draft": {
@@ -496,7 +493,6 @@ export async function runTool(ctx: ToolContext, name: string, rawInput: unknown)
       if (!acc) return fail("Account not found");
       const r = await sendMail(ctx.env, acc, { thread_id: row.thread_id, reply_to_message_id: row.reply_to_message_id, to: safeJson(row.to_json, []), cc: safeJson(row.cc_json, []), bcc: safeJson(row.bcc_json, []), subject: row.subject, body_html: row.body_html });
       await db.prepare(`DELETE FROM drafts WHERE id = ?`).bind(id).run();
-      ctx.emit({ type: "sent", draft_id: id, thread_id: r.thread_id });
       return ok({ ok: true, thread_id: r.thread_id }, `Sent “${row.subject}”`);
     }
     case "list_memory": {

@@ -47,7 +47,7 @@ export class AssistantAgent extends Think<Env, AgentState> {
 
   /** Think resolves `@cf/...` strings via the AI binding; BYOK returns a LanguageModel. */
   getModel() {
-    if (this.cfg && this.cfg.provider !== "workers_ai" && this.cfg.provider !== "mock") {
+    if (this.cfg && this.cfg.provider !== "workers_ai") {
       try {
         return getLanguageModel(this.env, this.cfg);
       } catch {
@@ -93,7 +93,6 @@ export class AssistantAgent extends Think<Env, AgentState> {
       user: { id: this.state.userId || "", email: this.state.email || "", name: this.state.name || "" },
       accounts: this.accounts,
       autoSend: !!this.cfg?.autoSend,
-      emit: () => {},
       waitUntil: (p) => this.ctx.waitUntil(p),
     };
   }

@@ -35,11 +35,11 @@ Use these names (verify in-tree if anything drifted after Phase 0):
 | Inbound | `src/worker/inbound.ts` — `resolveMailbox`, `parseInbound`, `deliverInbound`, `handleInboundEmail` |
 | Search (today) | FTS5 + LIKE fallback (Phase 1) |
 | Bundles | `assignBundles` in `src/worker/db.ts` |
-| AI | `src/worker/ai/` — `MockProvider`, `AI_MOCK=1`, `runChatTurn`, `runTool`, `TOOLS` |
+| AI | `src/worker/ai/` — Think `AssistantAgent`, `assistantTools`, `runTool`, `completeAi` |
 | Tools | `search_mail`, `list_threads`, `read_thread`, `list_screener`, `screen_sender`, `create_draft`, `send_draft`, … |
 | Auth | `/auth/*` — `src/worker/routes/auth.ts` |
 | Migrations | `migrations/*.sql` + register in `src/worker/migrations.ts` (`MIGRATIONS`, `ensureMigrations`, `runMigrations`) |
-| Env | `DB`, `ASSETS`, `APP_NAME`, `AI_MOCK`, `SESSION_SECRET`, … |
+| Env | `DB`, `ASSETS`, `APP_NAME`, `AI`, `SESSION_SECRET`, … |
 | Buckets | `screener \| imbox \| feed \| paper_trail \| screened_out \| trash` |
 | Screen | `pending \| imbox \| feed \| paper_trail \| screened_out` |
 | Tests | `test/` + `vitest.config.ts` — extend these; keep CI green |
@@ -135,7 +135,7 @@ README: Pub/Sub setup, push URL, secret, OAuth project steps.
 3. Dedupe per thread + cooldown.
 4. VAPID JWT via WebCrypto (or workers-compatible lib, keep dependency thin).
 5. Unsubscribe honored.
-6. **Honest limitation (document):** browser/PWA + Android. iOS Tauri/WKWebView ≠ Web Push; keep in-app polling or accept gap (no APNs unless explicitly scoped later).
+6. **Honest limitation (document):** browser/PWA (including iOS Home Screen Web Push). No native APNs client.
 
 ### Done when
 

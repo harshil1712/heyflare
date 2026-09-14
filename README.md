@@ -1,6 +1,6 @@
 # heyflare
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/doable-team/heyflare) [![npm](https://img.shields.io/npm/v/create-heyflare?label=npm%20create%20heyflare)](https://www.npmjs.com/package/create-heyflare) [![License: MIT](https://img.shields.io/badge/license-MIT-black)](LICENSE)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/doable-team/heyflare) [![License: MIT](https://img.shields.io/badge/license-MIT-black)](LICENSE)
 
 A self-hosted, HEY-style email client that runs entirely on Cloudflare — **with a built-in AI agent** that reads, triages and
 drafts for you. Connect Gmail accounts and mailboxes on your own domains, screen first-time senders, read a calm, unified Imbox, and keep a
@@ -55,19 +55,6 @@ lives in a resizable side panel and can see the thread you're reading.
 ## Stack
 
 Cloudflare Workers (Hono) + D1 · React 19 + Vite + Tailwind v4 + shadcn/ui · Gmail REST API · postal-mime for inbound mail.
-
-## Install with npm
-
-```sh
-npm create heyflare@latest my-mail
-```
-
-A short wizard copies the app into `my-mail`, installs dependencies and walks you through the Cloudflare deploy: Wrangler
-login, a D1 database, Worker name and hostname (`*.workers.dev` or a custom domain), optional Google OAuth secrets, then
-build + deploy. Migrations run on first request. Redeploy later with `npx create-heyflare deploy` (or `npm run deploy`).
-
-To update, run `npm create heyflare@latest` into a new folder and copy your `wrangler.local.jsonc` across — or use the
-GitHub fork path below to pull changes with git.
 
 ## One-click deploy
 
@@ -128,39 +115,15 @@ no existing DNS record for the host) or a zone route; or delete `routes` to use 
 Open your host. You'll be sent to `/setup` to create the single owner login (any email + password). After that `/setup`
 locks and only `/login` works. Then **Connect Gmail** from the sidebar. Turn on two-factor auth in Settings → Security.
 
-## Mac app
+## Mac / phone
 
-A native macOS app (Tauri 2, WebKit, ~10 MB) lives in [`apps/mac`](apps/mac). It wraps your server with a real title bar,
-native menu bar and shortcuts, dock badge, notifications, external links in your browser, and auto-updates. Download the
-DMG from [Releases](https://github.com/doable-team/heyflare/releases) or build it yourself (`cd apps/mac && npm install && npm run build`).
-
-Downloaded builds aren't notarized yet, so macOS may say the app is "damaged". Clear the quarantine flag once:
-
-```sh
-xattr -dr com.apple.quarantine /Applications/heyflare.app
-```
-
-## iPhone app
-
-**Preferred:** Expo native app in [`apps/mobile`](apps/mobile) — TestFlight-ready via EAS (`eas.json`), Imbox / Feed / Screener / Calendar, compose/reply, trays, search, assistant, and **push** (Expo → APNs). Enter your Worker URL and sign in.
-
-**Legacy:** Tauri WKWebView shell in [`apps/ios`](apps/ios) still builds, but new mobile work should go to Expo.
-
-```sh
-cd apps/mobile && npm install && npm run ios
-# TestFlight: npx eas-cli login && npx eas-cli init && npm run build:ios && npm run submit:ios
-```
-
-See [`apps/mobile/README.md`](apps/mobile/README.md) for credentials, push, and App Store Connect steps.
+Use the **installable PWA** (desktop browser or Add to Home Screen on phone — mobile UI under `/m`). Native Expo / Tauri shells were removed.
 
 ## Updating
 
 heyflare tells you when a new version is out: an **Update available** row appears at the bottom of the sidebar, and the
 dialog explains what changed and how to get it.
 
-- **Mac app** — press **Update and restart**. It downloads, installs and relaunches itself.
-- **iPhone app** — Expo app in `apps/mobile`, or refresh the legacy Tauri shell / SideStore.
-- **Created with npm** — `npx create-heyflare deploy`
 - **Cloned repo** — `git pull && npm run deploy`
 - **Fork + Workers Builds** — merge upstream and push; Cloudflare deploys it.
 

@@ -32,9 +32,6 @@ export function getLanguageModel(env: Env, cfg: AiConfig): LanguageModel {
     });
     return openai.chat(cfg.model || "gpt-4.1");
   }
-  if (cfg.provider === "mock") {
-    throw new Error("mock_provider_not_for_language_model");
-  }
   throw new AiNotConfigured();
 }
 
@@ -49,14 +46,6 @@ export async function completeAi<T = unknown>(
     schema?: { name: string; zod: z.ZodType<T> };
   }
 ): Promise<{ text: string; json?: T; refused?: boolean }> {
-  if (cfg.provider === "mock") {
-    if (p.schema) {
-      const guess = { subject: null, body_text: "Thanks — sounds good to me. Farhan", entries: [], summary: "Mock summary.", remove_ids: [] };
-      const r = p.schema.zod.safeParse(guess);
-      return { text: JSON.stringify(guess), json: r.success ? (r.data as T) : undefined };
-    }
-    return { text: "ready" };
-  }
   const model = getLanguageModel(env, cfg);
   if (p.schema) {
     const r = await generateText({

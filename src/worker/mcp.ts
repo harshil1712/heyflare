@@ -22,7 +22,6 @@ async function toolContext(env: Env, auth: AuthTokenContext): Promise<ToolContex
     user: { id: auth.user.id, email: auth.user.email, name: auth.user.name },
     accounts: auth.accounts,
     autoSend: !!cfg?.autoSend && auth.scopes === "write",
-    emit: () => {},
   };
 }
 

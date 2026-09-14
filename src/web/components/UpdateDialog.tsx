@@ -29,8 +29,7 @@ function CopyLine({ cmd }: { cmd: string }) {
 }
 
 /**
- * What's new, and how to get it: one click in the Mac app, one command on a self-hosted server.
- * Either way the data stays put — only the code is replaced.
+ * What's new, and how to get it by redeploying the Worker.
  */
 export function UpdateDialog({ open, onClose, info }: { open: boolean; onClose: () => void; info: UpdateInfo & { dismiss: () => void } }) {
   const [busy, setBusy] = useState(false);
@@ -91,11 +90,9 @@ export function UpdateDialog({ open, onClose, info }: { open: boolean; onClose: 
         ) : (
           <div className="space-y-2">
             <p className="text-[13px] text-muted-foreground">Update your server by redeploying:</p>
-            <CopyLine cmd="npx create-heyflare deploy" />
             <CopyLine cmd="git pull && npm run deploy" />
             <p className="text-[12px] text-muted-foreground">
-              The first command is for projects created with <code className="font-mono">npm create heyflare</code>, the second for a cloned repo. A fork
-              connected to Workers Builds redeploys on its own when you push.
+              A fork connected to Workers Builds redeploys on its own when you push.
             </p>
           </div>
         )}

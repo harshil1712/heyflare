@@ -11,7 +11,6 @@ export default defineConfig({
       wrangler: { configPath: "./wrangler.jsonc" },
       miniflare: {
         bindings: {
-          AI_MOCK: "1",
           SESSION_SECRET: "test-session-secret-phase0",
           PUBSUB_VERIFICATION_TOKEN: "test-pubsub-token",
         },
