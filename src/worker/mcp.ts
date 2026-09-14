@@ -10,19 +10,10 @@ import {
   localhostAllowedHostnames,
 } from "@modelcontextprotocol/server";
 import type { Env } from "./env";
-import { TOOLS, runTool, type ToolContext } from "./ai/tools";
+import { assistantTools, runTool, type ToolContext } from "./ai/tools";
 import { authenticateBearer, toolAllowed, type AuthTokenContext } from "./api-tokens";
 import { loadAiConfig } from "./ai/provider";
 import { VERSION } from "@shared/version";
-
-function toolInputSchema(tool: (typeof TOOLS)[number]) {
-  const props = (tool.input_schema as { properties?: Record<string, unknown> })?.properties ?? {};
-  const shape: Record<string, z.ZodType> = {};
-  for (const key of Object.keys(props)) {
-    shape[key] = z.unknown().optional().nullable();
-  }
-  return Object.keys(shape).length ? z.object(shape).passthrough() : z.object({});
-}
 
 async function toolContext(env: Env, auth: AuthTokenContext): Promise<ToolContext> {
   const cfg = await loadAiConfig(env, auth.user.id);
@@ -40,14 +31,14 @@ export async function createHeyflareMcpServer(env: Env, auth: AuthTokenContext):
   const server = new McpServer({ name: "heyflare", version: VERSION });
   const ctx = await toolContext(env, auth);
 
-  for (const tool of TOOLS) {
-    if (!toolAllowed(auth.scopes, tool.name)) continue;
-    const name = tool.name;
+  for (const [name, t] of Object.entries(assistantTools(ctx))) {
+    if (!toolAllowed(auth.scopes, name)) continue;
+    const description = typeof t.description === "string" ? t.description : name;
     server.registerTool(
       name,
       {
-        description: tool.description ?? name,
-        inputSchema: toolInputSchema(tool),
+        description,
+        inputSchema: t.inputSchema as z.ZodType,
       },
       async (args) => {
         const r = await runTool(ctx, name, args ?? {});

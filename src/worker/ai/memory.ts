@@ -3,7 +3,8 @@ import { z } from "zod";
 import type { Env } from "../env";
 import type { UserRow } from "../db";
 import { uid, now } from "../db";
-import { loadAiConfig, makeProvider } from "./provider";
+import { loadAiConfig } from "./provider";
+import { completeAi } from "./model";
 
 export type MemoryKind = "profile" | "tone" | "fact" | "preference" | "contact";
 export const MEMORY_KINDS: MemoryKind[] = ["profile", "tone", "fact", "preference", "contact"];
@@ -140,7 +141,6 @@ export async function learnFromMail(env: Env, user: UserRow, opts: { force?: boo
   const samples = await gatherSentSamples(env, user.id, since, 40);
   if (!samples.length) return { changed: 0, skipped: "nothing_new" };
   const existing = await listMemory(env, user.id);
-  const provider = makeProvider(cfg);
   const prompt = [
     `You maintain a small memory that helps an email assistant write like this user and act on their behalf.`,
     `User: ${user.name || "(no name)"} <${user.email}>.`,
@@ -159,7 +159,11 @@ export async function learnFromMail(env: Env, user: UserRow, opts: { force?: boo
     `- contact: one line per person that matters ("Rithesh — colleague at Acodez, handles design reviews").`,
     `Update existing entries by id when they should change; add new ones; list ids to remove when wrong or redundant. Keep the whole set under ${MAX_ENTRIES} entries. Never store secrets, codes, or one-off details.`,
   ].join("\n");
-  const res = await provider.complete({ maxTokens: 6000, effort: "medium", schema: { name: "memory_update", zod: LearnedSchema }, messages: [{ role: "user", content: prompt }] });
+  const res = await completeAi(env, cfg, {
+    maxTokens: 6000,
+    schema: { name: "memory_update", zod: LearnedSchema },
+    messages: [{ role: "user", content: prompt }],
+  });
   if (res.refused || !res.json) return { changed: 0, skipped: "no_output" };
   const parsed = res.json;
   let changed = 0;
@@ -183,9 +187,10 @@ export async function learnFromMail(env: Env, user: UserRow, opts: { force?: boo
 
 /** Cron entry: learn for users who opted in, at most every 12h, only when there is new sent mail. */
 export async function runLearning(env: Env): Promise<void> {
+  // Include Workers AI users (empty api_key_enc) and BYOK users.
   const users = await env.DB.prepare(
     `SELECT u.* FROM users u JOIN ai_settings s ON s.user_id = u.id
-     WHERE s.learn = 1 AND s.api_key_enc <> '' AND COALESCE((SELECT last_learned_at FROM ai_learning_state l WHERE l.user_id = u.id), 0) < ?`
+     WHERE s.learn = 1 AND COALESCE((SELECT last_learned_at FROM ai_learning_state l WHERE l.user_id = u.id), 0) < ?`
   )
     .bind(now() - 12 * 3600_000)
     .all<UserRow>();

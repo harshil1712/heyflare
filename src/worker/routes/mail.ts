@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import type { AppEnv } from "../env";
+import type { AppEnv, Env } from "../env";
 import type { AttachmentRow, MessageRow, ThreadRow } from "../db";
 import { applyBundleFlag } from "./screener";
 import { now, chunk, placeholders, safeJson, runBatch, threadsWithLabels, toThreadSummary, toMessage, getLabelsForThreads, toAttachment, inClause, accountForThread, accountsById, attachAvatars, avatarMap, loadBundles } from "../db";
@@ -10,6 +10,28 @@ import type { Address, Bucket, ThreadDetail, ImboxResponse, Counts } from "@shar
 import { searchThreads } from "../fts";
 
 const mail = new Hono<AppEnv>();
+
+/** Plain deps for thread load/actions — callable from HTTP routes, tools, or agents (no Hono context). */
+export type MailOps = {
+  env: Env;
+  userId: string;
+  /** All of the user's account ids (label/collection ownership checks). */
+  accountIds: string[];
+  waitUntil?: (p: Promise<unknown>) => void;
+};
+
+function schedule(ops: MailOps, p: Promise<unknown>) {
+  (ops.waitUntil ?? ((x) => { void x; }))(p);
+}
+
+function mailOpsFromHono(c: any): MailOps {
+  return {
+    env: c.env,
+    userId: c.get("user").id,
+    accountIds: c.get("allAccountIds") ?? [],
+    waitUntil: (p) => c.executionCtx.waitUntil(p),
+  };
+}
 
 const VISIBLE = `t.merged_into IS NULL AND (t.bubble_up_at IS NULL OR t.bubble_up_at <= ?)`;
 const PAGE = 50;
@@ -324,15 +346,12 @@ mail.get("/search", async (c) => {
 
 // ---------- Thread detail ----------
 /** A thread row the user owns (through any of their accounts), regardless of the requested scope. */
-async function ownedThread(c: any, id: string): Promise<ThreadRow | null> {
-  const db: D1Database = c.env.DB;
-  const user = c.get("user");
-  return (await db.prepare(`SELECT t.* FROM threads t JOIN accounts a ON a.id = t.account_id WHERE t.id = ? AND a.user_id = ?`).bind(id, user.id).first<ThreadRow>()) ?? null;
+async function ownedThread(db: D1Database, userId: string, id: string): Promise<ThreadRow | null> {
+  return (await db.prepare(`SELECT t.* FROM threads t JOIN accounts a ON a.id = t.account_id WHERE t.id = ? AND a.user_id = ?`).bind(id, userId).first<ThreadRow>()) ?? null;
 }
 
-async function loadThreadDetail(c: any, id: string): Promise<ThreadDetail | null> {
-  const db: D1Database = c.env.DB;
-  const row = await ownedThread(c, id);
+export async function loadThreadDetail(db: D1Database, userId: string, id: string): Promise<ThreadDetail | null> {
+  const row = await ownedThread(db, userId, id);
   if (!row) return null;
   const accId = row.account_id;
   const merged = await db.prepare(`SELECT id, subject, custom_subject FROM threads WHERE merged_into = ? AND account_id = ?`).bind(row.id, accId).all<{ id: string; subject: string; custom_subject: string | null }>();
@@ -382,7 +401,7 @@ mail.get("/threads/:id", async (c) => {
   const db = c.env.DB;
   const id = c.req.param("id");
   const peek = c.req.query("peek") === "1";
-  const detail = await loadThreadDetail(c, id);
+  const detail = await loadThreadDetail(db, c.get("user").id, id);
   if (!detail) return c.json({ error: "not_found" }, 404);
   if (!peek && (detail.unread || !detail.seen)) {
     const unreadGmailIds = await db
@@ -422,18 +441,17 @@ export type ActionBody = {
   remove?: string[];
 };
 
-async function applyAction(c: any, threadId: string, body: ActionBody, accountCache?: Map<string, AccountRow>): Promise<{ ok: true } | { error: string; status: number }> {
-  const db: D1Database = c.env.DB;
+export async function applyAction(ops: MailOps, threadId: string, body: ActionBody, accountCache?: Map<string, AccountRow>): Promise<{ ok: true } | { error: string; status: number }> {
+  const db = ops.env.DB;
   const t = now();
-  const row = await ownedThread(c, threadId);
+  const row = await ownedThread(db, ops.userId, threadId);
   if (!row) return { error: "not_found", status: 404 };
   const accId = row.account_id;
-  const allIds: string[] = c.get("allAccountIds") ?? [];
-  const ownedIn = inClause(allIds);
+  const ownedIn = inClause(ops.accountIds);
   // Gmail calls use the thread's own account tokens, never the header account.
   const gmailAccount = async (): Promise<AccountRow | null> => {
     if (accountCache?.has(accId)) return accountCache.get(accId)!;
-    const a = await accountForThread(db, c.get("user").id, threadId);
+    const a = await accountForThread(db, ops.userId, threadId);
     if (a && accountCache) accountCache.set(accId, a);
     return a;
   };
@@ -486,7 +504,7 @@ async function applyAction(c: any, threadId: string, body: ActionBody, accountCa
       await upd(`bucket = ?, reply_later = CASE WHEN ? = 'trash' THEN 0 ELSE reply_later END, set_aside = CASE WHEN ? = 'trash' THEN 0 ELSE set_aside END`, b, b, b);
       if (b === "trash" || row.bucket === "trash") {
         const acc = await gmailAccount();
-        if (acc) c.executionCtx.waitUntil(gmailPost(c.env, acc, `threads/${row.gmail_thread_id}/${b === "trash" ? "trash" : "untrash"}`, {}).catch(() => {}));
+        if (acc) schedule(ops, gmailPost(ops.env, acc, `threads/${row.gmail_thread_id}/${b === "trash" ? "trash" : "untrash"}`, {}).catch(() => {}));
       }
       return { ok: true };
     }
@@ -565,7 +583,7 @@ async function applyAction(c: any, threadId: string, body: ActionBody, accountCa
       ]);
       const gmailIds = [row.gmail_thread_id, ...merged.results.map((m) => m.gmail_thread_id)];
       const acc = await gmailAccount();
-      if (acc) c.executionCtx.waitUntil(Promise.all(gmailIds.map((g) => gmailPost(c.env, acc, `threads/${g}/trash`, {}).catch(() => {}))));
+      if (acc) schedule(ops, Promise.all(gmailIds.map((g) => gmailPost(ops.env, acc, `threads/${g}/trash`, {}).catch(() => {}))));
       return { ok: true };
     }
     default:
@@ -576,10 +594,11 @@ async function applyAction(c: any, threadId: string, body: ActionBody, accountCa
 mail.post("/threads/:id/actions", async (c) => {
   const body = await c.req.json<ActionBody>().catch(() => ({}) as ActionBody);
   const id = c.req.param("id");
-  const r = await applyAction(c, id, body);
+  const ops = mailOpsFromHono(c);
+  const r = await applyAction(ops, id, body);
   if ("error" in r) return c.json({ error: r.error }, r.status as any);
   if (body.action === "delete") return c.json({ ok: true, deleted: true });
-  const detail = await loadThreadDetail(c, id);
+  const detail = await loadThreadDetail(c.env.DB, ops.userId, id);
   return c.json(detail);
 });
 
@@ -589,10 +608,11 @@ mail.post("/threads/bulk", async (c) => {
   if (!ids.length) return c.json({ error: "no_threads" }, 400);
   if (body.action === "merge") return c.json({ error: "use_thread_action" }, 400);
   // Threads may span several accounts; resolve each account once.
-  const cache = await accountsById(c.env.DB, c.get("user").id, c.get("allAccountIds") ?? []);
+  const ops = mailOpsFromHono(c);
+  const cache = await accountsById(c.env.DB, ops.userId, ops.accountIds);
   let ok = 0;
   for (const id of ids) {
-    const r = await applyAction(c, id, body, cache);
+    const r = await applyAction(ops, id, body, cache);
     if ("ok" in r) ok++;
   }
   return c.json({ ok: true, count: ok });
@@ -663,5 +683,4 @@ mail.get("/files", async (c) => {
   return c.json({ files, next_page: hasMore ? page + 1 : null });
 });
 
-export { loadThreadDetail, applyAction };
 export default mail;

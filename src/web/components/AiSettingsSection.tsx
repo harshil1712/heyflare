@@ -20,7 +20,7 @@ export function AiSection({ compact }: { compact?: boolean }) {
   const settings = useAiSettings();
   const m = useAiMutations();
   const s = settings.data;
-  const [preset, setPreset] = useState<AiPreset["id"]>("anthropic");
+  const [preset, setPreset] = useState<AiPreset["id"]>("workers_ai");
   const [baseUrl, setBaseUrl] = useState("");
   const [key, setKey] = useState("");
   const [model, setModel] = useState("");
@@ -34,6 +34,7 @@ export function AiSection({ compact }: { compact?: boolean }) {
   }, [s, dirty]);
   const inputCls = compact ? "h-11 text-[16px]" : undefined;
   const p = s?.presets.find((x) => x.id === preset) ?? s?.presets[0];
+  const isWorkersAi = preset === "workers_ai";
   const choosePreset = (id: AiPreset["id"]) => {
     const np = s?.presets.find((x) => x.id === id);
     setPreset(id);
@@ -43,15 +44,25 @@ export function AiSection({ compact }: { compact?: boolean }) {
   };
   const save = () =>
     m.saveSettings.mutate(
-      { preset, base_url: preset === "custom" ? baseUrl : undefined, api_key: key.trim() ? key.trim() : undefined, model },
+      { preset, base_url: preset === "custom" ? baseUrl : undefined, api_key: isWorkersAi ? null : key.trim() ? key.trim() : undefined, model },
       { onSuccess: () => { toast("AI settings saved"); setKey(""); setDirty(false); }, onError: (e) => toast.error((e as Error).message) }
     );
   const test = () => m.test.mutate(undefined, { onSuccess: (r) => (r.ok ? toast(`Connected · ${r.model} said “${r.reply}”`) : toast.error(r.error ?? "Failed")), onError: (e) => toast.error((e as Error).message) });
 
   return (
     <>
-      <Section title="AI assistant" description="Bring your own key. Mail is only sent to the provider when you use an AI feature.">
+      <Section
+        title="AI assistant"
+        description={
+          isWorkersAi
+            ? "Runs on Cloudflare Workers AI through the AI binding — no API key. Mail is only sent to the model when you use an AI feature."
+            : "Bring your own key. Mail is only sent to the provider when you use an AI feature."
+        }
+      >
         {s && !s.server_ready && <div className="mx-2 mb-3 rounded-md bg-muted/60 px-3 py-2 text-[13px]">SESSION_SECRET isn't set on the server, so keys can't be stored yet.</div>}
+        {s?.workers_ai === false && (
+          <div className="mx-2 mb-3 rounded-md bg-muted/60 px-3 py-2 text-[13px]">Workers AI isn't bound on this deployment. Add an `AI` binding in wrangler, or pick another provider.</div>
+        )}
         <div className={cn("px-2", !compact && "max-w-lg")}>
           <FieldGroup className="gap-4">
             <Field>
@@ -62,7 +73,13 @@ export function AiSection({ compact }: { compact?: boolean }) {
                   {(s?.presets ?? []).map((x) => <SelectItem key={x.id} value={x.id}>{x.label}</SelectItem>)}
                 </SelectContent>
               </Select>
-              {p && p.id !== "custom" && <FieldDescription className="tnum">Endpoint: {p.base_url}</FieldDescription>}
+              {p && p.id === "workers_ai" && (
+                <FieldDescription>
+                  Uses Cloudflare&apos;s <code className="text-[12px]">workers-ai-provider</code> with the <code className="text-[12px]">AI</code> binding
+                  (<code className="text-[12px]">createWorkersAI({"{ binding: env.AI }"})</code>). Default model GLM 5.3.
+                </FieldDescription>
+              )}
+              {p && p.id !== "custom" && p.id !== "workers_ai" && <FieldDescription className="tnum">Endpoint: {p.base_url}</FieldDescription>}
             </Field>
             {preset === "custom" && (
               <Field>
@@ -71,24 +88,26 @@ export function AiSection({ compact }: { compact?: boolean }) {
                 <FieldDescription>Any OpenAI-compatible server: Ollama, LM Studio, Groq, Mistral, Together…</FieldDescription>
               </Field>
             )}
-            <Field>
-              <FieldLabel htmlFor="ai-key">API key</FieldLabel>
-              <Input id="ai-key" type="password" value={key} onChange={(e) => { setKey(e.target.value); setDirty(true); }} placeholder={s?.key_hint ? `Stored · ${s.key_hint}` : p?.key_placeholder ?? "API key"} autoComplete="off" className={inputCls} />
-              <FieldDescription className="flex items-center gap-2 flex-wrap">
-                <span>Stored encrypted on your server and never shown again.</span>
-                {p?.key_url && <a className="inline-flex items-center gap-1 underline underline-offset-2" href={p.key_url} target="_blank" rel="noreferrer">Get a key <ExternalLink className="size-3" /></a>}
-                {s?.key_hint && <button type="button" className="underline underline-offset-2" onClick={() => m.saveSettings.mutate({ api_key: null }, { onSuccess: () => toast("Key removed") })}>Remove key</button>}
-              </FieldDescription>
-            </Field>
+            {!isWorkersAi && (
+              <Field>
+                <FieldLabel htmlFor="ai-key">API key</FieldLabel>
+                <Input id="ai-key" type="password" value={key} onChange={(e) => { setKey(e.target.value); setDirty(true); }} placeholder={s?.key_hint ? `Stored · ${s.key_hint}` : p?.key_placeholder ?? "API key"} autoComplete="off" className={inputCls} />
+                <FieldDescription className="flex items-center gap-2 flex-wrap">
+                  <span>Stored encrypted on your server and never shown again.</span>
+                  {p?.key_url && <a className="inline-flex items-center gap-1 underline underline-offset-2" href={p.key_url} target="_blank" rel="noreferrer">Get a key <ExternalLink className="size-3" /></a>}
+                  {s?.key_hint && <button type="button" className="underline underline-offset-2" onClick={() => m.saveSettings.mutate({ api_key: null }, { onSuccess: () => toast("Key removed") })}>Remove key</button>}
+                </FieldDescription>
+              </Field>
+            )}
             <Field>
               <FieldLabel htmlFor="ai-model">Model</FieldLabel>
               <Input id="ai-model" list="ai-models" value={model} onChange={(e) => { setModel(e.target.value); setDirty(true); }} placeholder={p?.default_model} className={inputCls} />
               <datalist id="ai-models">{(p?.models ?? []).map((x) => <option key={x} value={x} />)}</datalist>
-              <FieldDescription>Type any model id the provider supports.</FieldDescription>
+              <FieldDescription>{isWorkersAi ? "Workers AI model id (e.g. @cf/zai-org/glm-5.3)." : "Type any model id the provider supports."}</FieldDescription>
             </Field>
           </FieldGroup>
           <div className={cn("flex items-center gap-2 mt-4", compact && "flex-col items-stretch")}>
-            <Button size={compact ? "lg" : "sm"} onClick={save} disabled={m.saveSettings.isPending || (!dirty && !key)}>{m.saveSettings.isPending ? <Loader2 className="animate-spin" /> : <Check />} Save</Button>
+            <Button size={compact ? "lg" : "sm"} onClick={save} disabled={m.saveSettings.isPending || (!dirty && !key && !isWorkersAi)}>{m.saveSettings.isPending ? <Loader2 className="animate-spin" /> : <Check />} Save</Button>
             <Button size={compact ? "lg" : "sm"} variant="outline" onClick={test} disabled={m.test.isPending || !s?.configured || dirty}>{m.test.isPending ? <Loader2 className="animate-spin" /> : <Sparkles />} Test connection</Button>
             {s?.configured && !dirty && <span className="text-[12px] text-muted-foreground">Ready · <Link to="/assistant" className="underline underline-offset-2">open the assistant</Link></span>}
           </div>

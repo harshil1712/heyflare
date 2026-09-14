@@ -27,8 +27,10 @@ import { sweepGmailWatches } from "./pubsub";
 import tokensRoutes from "./routes/tokens";
 import pushRoutes from "./routes/push";
 import { handleMcpRequest } from "./mcp";
+import { routeAgentRequest } from "agents";
 
 export { SyncActor } from "./sync-actor";
+export { AssistantAgent } from "./ai/assistant-agent";
 
 const app = new Hono<AppEnv>();
 
@@ -132,13 +134,15 @@ export default {
   fetch: async (request: Request, env: Env, ctx: ExecutionContext) => {
     const { pathname } = new URL(request.url);
     // Static assets never need the database; everything else gets a migrated schema first (cached after the first call).
-    if (pathname.startsWith("/api/") || pathname.startsWith("/auth/") || pathname.startsWith("/pubsub/") || pathname.startsWith("/mcp")) {
+    if (pathname.startsWith("/api/") || pathname.startsWith("/auth/") || pathname.startsWith("/pubsub/") || pathname.startsWith("/mcp") || pathname.startsWith("/agents")) {
       try {
         await ensureMigrations(env);
       } catch (e) {
         return Response.json({ error: "migration_failed", message: (e as Error).message?.slice(0, 300) }, { status: 500 });
       }
     }
+    const agentResponse = await routeAgentRequest(request, env);
+    if (agentResponse) return agentResponse;
     return app.fetch(request, env, ctx);
   },
   scheduled: (_event: ScheduledEvent, env: Env, ctx: ExecutionContext) => {

@@ -1,18 +1,16 @@
-// Provider layer: a common stream/complete interface over Anthropic (official SDK) and OpenAI-compatible APIs.
+// AI settings / presets. Chat + complete use getLanguageModel (model.ts) + AI SDK.
 import { getSessionSecret } from "../secrets";
 import Anthropic from "@anthropic-ai/sdk";
-import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
-import type { z } from "zod";
 import type { Env } from "../env";
 import { decryptSecret } from "./crypto";
-import { OpenAiCompatibleProvider, OpenAiApiError, describeOpenAiError } from "./openai";
-import { MockProvider } from "./mock";
+import { OpenAiApiError, describeOpenAiError } from "./openai";
+import { WORKERS_AI_DEFAULT_MODEL, describeWorkersAiError } from "./workers-ai";
 
 /* ---------- presets ---------- */
 
-export type ProviderKind = "anthropic" | "openai_compatible" | "mock";
+export type ProviderKind = "anthropic" | "openai_compatible" | "mock" | "workers_ai";
 export interface Preset {
-  id: "anthropic" | "openai" | "xai" | "openrouter" | "gemini" | "custom" | "mock";
+  id: "workers_ai" | "anthropic" | "openai" | "xai" | "openrouter" | "gemini" | "custom" | "mock";
   label: string;
   kind: ProviderKind;
   base_url: string;
@@ -23,6 +21,15 @@ export interface Preset {
 }
 
 export const PRESETS: Preset[] = [
+  {
+    id: "workers_ai",
+    label: "Workers AI (Cloudflare)",
+    kind: "workers_ai",
+    base_url: "",
+    default_model: "@cf/zai-org/glm-5.3",
+    models: ["@cf/zai-org/glm-5.3", "@cf/zai-org/glm-5.2", "@cf/zai-org/glm-4.7-flash"],
+    key_placeholder: "Not needed — uses the AI binding",
+  },
   { id: "anthropic", label: "Anthropic", kind: "anthropic", base_url: "https://api.anthropic.com", default_model: "claude-opus-5", models: ["claude-opus-5", "claude-fable-5-1", "claude-sonnet-5", "claude-haiku-4-5"], key_placeholder: "sk-ant-api03-…", key_url: "https://console.anthropic.com/settings/keys" },
   { id: "openai", label: "OpenAI", kind: "openai_compatible", base_url: "https://api.openai.com/v1", default_model: "gpt-5", models: ["gpt-5", "gpt-5-mini", "gpt-4.1", "o3"], key_placeholder: "sk-…", key_url: "https://platform.openai.com/api-keys" },
   { id: "xai", label: "xAI (Grok)", kind: "openai_compatible", base_url: "https://api.x.ai/v1", default_model: "grok-4", models: ["grok-4", "grok-4-fast", "grok-3"], key_placeholder: "xai-…", key_url: "https://console.x.ai" },
@@ -30,7 +37,7 @@ export const PRESETS: Preset[] = [
   { id: "gemini", label: "Google Gemini", kind: "openai_compatible", base_url: "https://generativelanguage.googleapis.com/v1beta/openai", default_model: "gemini-2.5-pro", models: ["gemini-2.5-pro", "gemini-2.5-flash"], key_placeholder: "AIza…", key_url: "https://aistudio.google.com/apikey" },
   { id: "custom", label: "Custom (OpenAI-compatible)", kind: "openai_compatible", base_url: "", default_model: "", models: ["llama3.1", "mistral", "qwen2.5"], key_placeholder: "API key (optional for local servers)" },
 ];
-export const DEFAULT_MODEL = "claude-opus-5";
+export const DEFAULT_MODEL = WORKERS_AI_DEFAULT_MODEL;
 export const MODELS = PRESETS[0].models.map((id) => ({ id, label: id }));
 
 /** Hidden test provider: streams a canned answer and calls one tool. Only usable when env.AI_MOCK === "1". */
@@ -73,16 +80,69 @@ export async function loadAiSettings(env: Env, userId: string): Promise<AiSettin
 /** Decrypted config, or null when nothing usable is configured. */
 export async function loadAiConfig(env: Env, userId: string): Promise<AiConfig | null> {
   const row = await loadAiSettings(env, userId);
-  if (!row) return null;
-  const preset = presetById(row.preset || (row.provider === "anthropic" ? "anthropic" : "custom"));
+  const fallbackWorkers = !!env.AI;
+
+  if (!row) {
+    if (!fallbackWorkers) return null;
+    return {
+      provider: "workers_ai",
+      preset: "workers_ai",
+      baseUrl: "",
+      apiKey: "",
+      model: DEFAULT_MODEL,
+      learn: true,
+      autoSend: false,
+    };
+  }
+
+  const preset = presetById(row.preset || (row.provider === "anthropic" ? "anthropic" : row.provider === "workers_ai" ? "workers_ai" : "custom"));
   if (preset.kind === "mock") {
     if (env.AI_MOCK !== "1") return null;
     return { provider: "mock", preset: "mock", baseUrl: "", apiKey: "", model: row.model || preset.default_model, learn: !!row.learn, autoSend: !!row.auto_send };
   }
+  if (preset.kind === "workers_ai") {
+    if (!env.AI) return null;
+    return {
+      provider: "workers_ai",
+      preset: "workers_ai",
+      baseUrl: "",
+      apiKey: "",
+      model: row.model || preset.default_model,
+      learn: !!row.learn,
+      autoSend: !!row.auto_send,
+    };
+  }
   const apiKey = row.api_key_enc ? await decryptSecret(await getSessionSecret(env), row.api_key_enc) : "";
   const baseUrl = preset.id === "custom" ? row.base_url.replace(/\/+$/, "") : preset.base_url;
-  if (preset.kind === "anthropic" && !apiKey) return null;
+  if (preset.kind === "anthropic" && !apiKey) {
+    if (fallbackWorkers) {
+      return {
+        provider: "workers_ai",
+        preset: "workers_ai",
+        baseUrl: "",
+        apiKey: "",
+        model: DEFAULT_MODEL,
+        learn: !!row.learn,
+        autoSend: !!row.auto_send,
+      };
+    }
+    return null;
+  }
   if (preset.kind === "openai_compatible" && !baseUrl) return null;
+  if (preset.kind === "openai_compatible" && preset.id !== "custom" && !apiKey) {
+    if (fallbackWorkers) {
+      return {
+        provider: "workers_ai",
+        preset: "workers_ai",
+        baseUrl: "",
+        apiKey: "",
+        model: DEFAULT_MODEL,
+        learn: !!row.learn,
+        autoSend: !!row.auto_send,
+      };
+    }
+    return null;
+  }
   return { provider: preset.kind, preset: preset.id, baseUrl, apiKey, model: row.model || preset.default_model, learn: !!row.learn, autoSend: !!row.auto_send };
 }
 
@@ -92,120 +152,12 @@ export class AiNotConfigured extends Error {
   }
 }
 
-/* ---------- common interface ---------- */
-
-export type StreamEvent =
-  | { type: "text"; text: string }
-  | { type: "done"; stop: "end" | "tool_use" | "refusal" | "max_tokens"; content: Anthropic.ContentBlock[] }
-  | { type: "error"; message: string };
-
-export interface StreamParams {
-  system: string;
-  /** Canonical history: Anthropic-style content blocks. */
-  messages: Anthropic.MessageParam[];
-  tools: Anthropic.Tool[];
-  maxTokens: number;
-  effort?: "low" | "medium" | "high";
-  signal?: AbortSignal;
-}
-
-export interface CompleteParams<T> {
-  system?: string;
-  messages: Anthropic.MessageParam[];
-  schema?: { name: string; zod: z.ZodType<T> };
-  maxTokens: number;
-  effort?: "low" | "medium" | "high";
-}
-
-export interface LlmProvider {
-  readonly model: string;
-  stream(p: StreamParams): AsyncIterable<StreamEvent>;
-  complete<T = unknown>(p: CompleteParams<T>): Promise<{ text: string; json?: T; refused?: boolean }>;
-}
-
-export function makeProvider(cfg: AiConfig): LlmProvider {
-  if (cfg.provider === "mock") return new MockProvider(cfg.model);
-  if (cfg.provider === "anthropic") return new AnthropicProvider(cfg);
-  return new OpenAiCompatibleProvider(cfg);
-}
-
-/* ---------- Anthropic (official SDK) ---------- */
-
-export function makeClient(cfg: AiConfig): Anthropic {
-  const base = { maxRetries: 1, timeout: 120_000 };
-  // OAuth tokens (e.g. from `ant auth`) go on Authorization: Bearer with the oauth beta; API keys use x-api-key.
-  if (cfg.apiKey.startsWith("sk-ant-oat") || !cfg.apiKey.startsWith("sk-ant-")) {
-    return new Anthropic({ ...base, apiKey: null, authToken: cfg.apiKey, defaultHeaders: { "anthropic-beta": "oauth-2025-04-20" } });
-  }
-  return new Anthropic({ ...base, apiKey: cfg.apiKey });
-}
-
-class AnthropicProvider implements LlmProvider {
-  readonly model: string;
-  private client: Anthropic;
-  constructor(private cfg: AiConfig) {
-    this.model = cfg.model;
-    this.client = makeClient(cfg);
-  }
-  async *stream(p: StreamParams): AsyncIterable<StreamEvent> {
-    const chunks: string[] = [];
-    let resolveTick: (() => void) | null = null;
-    const stream = this.client.messages.stream(
-      {
-        model: this.model,
-        max_tokens: p.maxTokens,
-        system: [{ type: "text", text: p.system, cache_control: { type: "ephemeral" } }],
-        // Cache breakpoint on the tools prefix (last tool) so tool defs stay cached across turns.
-        tools: p.tools.length
-          ? p.tools.map((t, i) => (i === p.tools.length - 1 ? { ...t, cache_control: { type: "ephemeral" as const } } : t))
-          : p.tools,
-        messages: p.messages,
-        output_config: { effort: p.effort ?? "medium" },
-      },
-      { signal: p.signal }
-    );
-    stream.on("text", (d) => {
-      chunks.push(d);
-      resolveTick?.();
-    });
-    const final = stream.finalMessage().then((m) => ({ m }), (e: unknown) => ({ e }));
-    let done: { m: Anthropic.Message } | { e: unknown } | null = null;
-    final.then((r) => {
-      done = r;
-      resolveTick?.();
-    });
-    while (!done) {
-      if (chunks.length) yield { type: "text", text: chunks.splice(0).join("") };
-      else await new Promise<void>((r) => (resolveTick = r));
-      resolveTick = null;
-    }
-    if (chunks.length) yield { type: "text", text: chunks.splice(0).join("") };
-    const r = done as { m: Anthropic.Message } | { e: unknown };
-    if ("e" in r) {
-      yield { type: "error", message: describeApiError(r.e) };
-      return;
-    }
-    const m = r.m;
-    const stop = m.stop_reason === "refusal" ? "refusal" : m.stop_reason === "tool_use" ? "tool_use" : m.stop_reason === "max_tokens" ? "max_tokens" : "end";
-    yield { type: "done", stop, content: m.content };
-  }
-  async complete<T>(p: CompleteParams<T>) {
-    const common = { model: this.model, max_tokens: p.maxTokens, output_config: { effort: p.effort ?? "medium" } as Anthropic.MessageCreateParams["output_config"], messages: p.messages, ...(p.system ? { system: [{ type: "text" as const, text: p.system }] } : {}) };
-    if (p.schema) {
-      const res = await this.client.messages.parse({ ...common, output_config: { ...common.output_config, format: zodOutputFormat(p.schema.zod) } });
-      if (res.stop_reason === "refusal") return { text: "", refused: true };
-      return { text: res.content.filter((b): b is Anthropic.TextBlock => b.type === "text").map((b) => b.text).join(""), json: (res.parsed_output ?? undefined) as T | undefined };
-    }
-    const res = await this.client.messages.create(common);
-    if (res.stop_reason === "refusal") return { text: "", refused: true };
-    return { text: res.content.filter((b): b is Anthropic.TextBlock => b.type === "text").map((b) => b.text).join("") };
-  }
-}
-
 /** Friendly message for API failures shown in the UI. */
 export function describeApiError(e: unknown): string {
-  if (e instanceof AiNotConfigured) return "Set up an AI provider in Settings → AI first.";
+  if (e instanceof AiNotConfigured) return "AI isn't available — bind Workers AI (env.AI) or set a provider in Settings → AI.";
   if (e instanceof OpenAiApiError) return describeOpenAiError(e);
+  const raw = String((e as Error)?.message ?? e);
+  if (/Workers AI|workers-ai|@cf\//i.test(raw) || /Workers Paid/i.test(raw)) return describeWorkersAiError(e);
   if (e instanceof Anthropic.AuthenticationError) return "The API key was rejected. Check it in Settings → AI.";
   if (e instanceof Anthropic.PermissionDeniedError) return "This key isn't allowed to use that model.";
   if (e instanceof Anthropic.RateLimitError) return "Rate limited by the provider. Try again in a moment.";
@@ -213,5 +165,6 @@ export function describeApiError(e: unknown): string {
   if (e instanceof Anthropic.APIError) return `Provider error ${e.status ?? ""}: ${e.message.slice(0, 200)}`;
   const msg = (e as Error)?.message ?? String(e);
   if (msg === "session_secret_missing") return "SESSION_SECRET is not set on the server, so keys can't be decrypted.";
+  if (/mock_provider_not_for_language_model/i.test(msg)) return "Mock provider isn't available here.";
   return msg.slice(0, 300);
 }

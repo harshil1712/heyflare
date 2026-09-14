@@ -1,96 +1,13 @@
-// The assistant: system prompt, SSE streaming chat with a manual tool loop.
-import type Anthropic from "@anthropic-ai/sdk";
+// Shared AI helpers: system prompt + one-shot reply/summarize (completeAi). Chat lives in Think (AssistantAgent).
 import { z } from "zod";
 import type { Env } from "../env";
 import type { AccountRow, UserRow } from "../db";
-import { uid, now } from "../db";
 import { listMemory, memoryText } from "./memory";
-import { TOOLS, runTool, type ToolContext } from "./tools";
-import { type AiConfig, makeProvider, describeApiError } from "./provider";
+import { type AiConfig } from "./provider";
+import { completeAi } from "./model";
 import { htmlToText } from "../sanitize";
 
-const MAX_ITERATIONS = 12;
-const HISTORY_CHAR_BUDGET = 120_000; // ~30k tokens at chars/4
-const HISTORY_KEEP_TAIL = 8; // keep last N messages verbatim after compaction
-
-/** Read-only tools may run in parallel; everything else is serialized. */
-export const READ_ONLY_TOOLS = new Set([
-  "search_mail",
-  "list_threads",
-  "read_thread",
-  "list_screener",
-  "list_labels",
-  "list_collections",
-  "find_contact",
-  "list_memory",
-]);
-
-export function estimateChars(messages: Anthropic.MessageParam[]): number {
-  return messages.reduce((n, m) => n + JSON.stringify(m.content).length, 0);
-}
-
-/** Summarize oldest turns when history exceeds the char budget; keep the last N messages intact. */
-export function compactHistory(messages: Anthropic.MessageParam[], budget = HISTORY_CHAR_BUDGET, keepTail = HISTORY_KEEP_TAIL): Anthropic.MessageParam[] {
-  if (messages.length <= keepTail + 1 || estimateChars(messages) <= budget) return messages;
-  const head = messages.slice(0, Math.max(0, messages.length - keepTail));
-  const tail = messages.slice(messages.length - keepTail);
-  const summary = head
-    .map((m) => {
-      const role = m.role;
-      const text = typeof m.content === "string" ? m.content : JSON.stringify(m.content).slice(0, 400);
-      return `${role}: ${text}`;
-    })
-    .join("\n")
-    .slice(0, 6000);
-  return [{ role: "user", content: `[{compacted history}]\n${summary}` }, ...tail];
-}
-
-export async function withRetry<T>(fn: () => Promise<T>, opts: { retries?: number; label?: string } = {}): Promise<T> {
-  const retries = opts.retries ?? 3;
-  let last: unknown;
-  for (let i = 0; i <= retries; i++) {
-    try {
-      return await fn();
-    } catch (e) {
-      last = e;
-      const msg = String((e as Error)?.message ?? e);
-      const status = (e as { status?: number })?.status;
-      const retryable = status === 429 || (typeof status === "number" && status >= 500) || /429|rate|temporar|timeout|5\d\d/i.test(msg);
-      if (!retryable || i === retries) throw e;
-      await new Promise((r) => setTimeout(r, Math.min(8000, 400 * 2 ** i)));
-    }
-  }
-  throw last;
-}
-
-/** Run tool uses: parallel for read-only batches, serial for writes. */
-export async function runToolBatch(
-  ctx: ToolContext,
-  uses: Anthropic.ToolUseBlock[],
-  send: (e: SseEvent) => Promise<void>
-): Promise<Anthropic.ToolResultBlockParam[]> {
-  const results: Anthropic.ToolResultBlockParam[] = new Array(uses.length);
-  const readIdx: number[] = [];
-  const writeIdx: number[] = [];
-  uses.forEach((u, i) => (READ_ONLY_TOOLS.has(u.name) ? readIdx : writeIdx).push(i));
-
-  const runOne = async (i: number) => {
-    const u = uses[i]!;
-    await send({ type: "tool", id: u.id, name: u.name, status: "running", summary: labelFor(u.name) });
-    let r: { result: string; summary: string; isError?: boolean };
-    try {
-      r = await runTool(ctx, u.name, u.input);
-    } catch (e) {
-      r = { result: JSON.stringify({ error: (e as Error).message }), summary: `${labelFor(u.name)} failed`, isError: true };
-    }
-    await send({ type: "tool", id: u.id, name: u.name, status: r.isError ? "error" : "done", summary: r.summary });
-    results[i] = { type: "tool_result", tool_use_id: u.id, content: r.result, is_error: r.isError || undefined };
-  };
-
-  if (readIdx.length) await Promise.all(readIdx.map(runOne));
-  for (const i of writeIdx) await runOne(i);
-  return results;
-}
+export { completeAi } from "./model";
 
 export interface ChatDeps {
   env: Env;
@@ -121,89 +38,6 @@ export async function buildSystemPrompt(d: ChatDeps): Promise<string> {
   ].join("\n");
 }
 
-export type SseEvent = { type: "start"; conversation_id: string } | { type: "text"; text: string } | { type: "tool"; name: string; status: "running" | "done" | "error"; summary: string; id: string } | { type: "draft"; draft: unknown } | { type: "sent"; draft_id: string; thread_id: string } | { type: "done"; conversation_id: string } | { type: "error"; message: string };
-
-/** Runs one user turn; streams SSE events through `send`, persists messages, returns when finished. */
-export async function runChatTurn(d: ChatDeps, conversationId: string, userText: string, send: (e: SseEvent) => Promise<void>, signal?: AbortSignal, contextBlocks: string[] = []): Promise<void> {
-  const db = d.env.DB;
-  const system = await buildSystemPrompt(d);
-  // History from the DB (full content blocks so tool_use / tool_result pairs round-trip).
-  const hist = await db.prepare(`SELECT role, content_json FROM ai_messages WHERE conversation_id = ? ORDER BY created_at ASC LIMIT 200`).bind(conversationId).all<{ role: "user" | "assistant"; content_json: string }>();
-  let messages: Anthropic.MessageParam[] = hist.results.map((r) => ({ role: r.role, content: JSON.parse(r.content_json) }));
-  // Context blocks (threads the user attached) go first, clearly labelled, then the user's own words.
-  const userBlock: Anthropic.MessageParam = { role: "user", content: [...contextBlocks.map((text) => ({ type: "text" as const, text })), { type: "text", text: userText }] };
-  messages.push(userBlock);
-  await db.prepare(`INSERT INTO ai_messages (id, conversation_id, role, content_json, created_at) VALUES (?, ?, 'user', ?, ?)`).bind(uid(), conversationId, JSON.stringify(userBlock.content), now()).run();
-  messages = compactHistory(messages);
-
-  const ctx: ToolContext = {
-    env: d.env,
-    user: { id: d.user.id, email: d.user.email, name: d.user.name },
-    accounts: d.accounts,
-    autoSend: d.cfg.autoSend,
-    emit: (e) => void send(e as SseEvent),
-  };
-
-  const provider = makeProvider(d.cfg);
-  try {
-    for (let i = 0; i < MAX_ITERATIONS; i++) {
-      if (signal?.aborted) break;
-      // Holder object so TS tracks assignments inside the withRetry callback.
-      const turn: {
-        final: { stop: "end" | "tool_use" | "refusal" | "max_tokens"; content: Anthropic.ContentBlock[] } | null;
-        failed: boolean;
-      } = { final: null, failed: false };
-      await withRetry(async () => {
-        turn.final = null;
-        turn.failed = false;
-        for await (const ev of provider.stream({ system, messages, tools: TOOLS, maxTokens: 8000, effort: "medium", signal })) {
-          if (ev.type === "text") await send({ type: "text", text: ev.text });
-          else if (ev.type === "error") {
-            // Treat provider stream errors as retryable throws when they look like 429/5xx.
-            if (/429|rate|5\d\d|temporar/i.test(ev.message)) throw Object.assign(new Error(ev.message), { status: 429 });
-            await send({ type: "error", message: ev.message });
-            turn.failed = true;
-            break;
-          } else turn.final = { stop: ev.stop, content: ev.content };
-        }
-      });
-      if (turn.failed || !turn.final) break;
-      const final = turn.final;
-      if (final.content.length) {
-        messages.push({ role: "assistant", content: final.content });
-        await db.prepare(`INSERT INTO ai_messages (id, conversation_id, role, content_json, created_at) VALUES (?, ?, 'assistant', ?, ?)`).bind(uid(), conversationId, JSON.stringify(final.content), now()).run();
-      }
-      if (final.stop === "refusal") {
-        await send({ type: "error", message: "The model declined this request." });
-        break;
-      }
-      if (final.stop !== "tool_use") break;
-
-      const uses = final.content.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
-      const results = await runToolBatch(ctx, uses, send);
-      const resultMsg: Anthropic.MessageParam = { role: "user", content: results };
-      messages.push(resultMsg);
-      await db.prepare(`INSERT INTO ai_messages (id, conversation_id, role, content_json, created_at) VALUES (?, ?, 'user', ?, ?)`).bind(uid(), conversationId, JSON.stringify(results), now()).run();
-      messages = compactHistory(messages);
-    }
-  } catch (e) {
-    if (!(signal?.aborted)) await send({ type: "error", message: describeApiError(e) });
-  }
-  await db.prepare(`UPDATE ai_conversations SET updated_at = ? WHERE id = ?`).bind(now(), conversationId).run();
-  await send({ type: "done", conversation_id: conversationId });
-}
-
-function labelFor(tool: string): string {
-  const map: Record<string, string> = {
-    search_mail: "Searching mail", list_threads: "Listing threads", read_thread: "Reading thread", list_screener: "Checking the Screener", screen_sender: "Screening sender",
-    thread_action: "Organising", list_labels: "Listing labels", list_collections: "Listing collections", create_collection: "Creating collection", add_to_collection: "Adding to collection",
-    save_clip: "Saving clip", find_contact: "Looking up contact", create_draft: "Writing draft", send_draft: "Sending", list_memory: "Recalling memory", remember: "Remembering", forget: "Forgetting",
-  };
-  return map[tool] ?? tool;
-}
-
-/* ---------- Reply with AI ---------- */
-
 const ReplySchema = z.object({
   subject: z.string().nullable().describe("Only if the subject should change; null otherwise"),
   body_text: z.string().describe("The reply text: greeting, body paragraphs separated by blank lines, sign-off. No subject line, no quoted history."),
@@ -211,16 +45,32 @@ const ReplySchema = z.object({
 
 export type ReplyTone = "match" | "formal" | "friendly" | "brief";
 
-export async function generateReply(d: ChatDeps, threadText: string, brief: string, tone: ReplyTone, extra: { subject: string; to: string; myEmail: string }): Promise<{ subject: string | null; body_text: string; body_html: string }> {
-  const provider = makeProvider(d.cfg);
+export async function generateReply(
+  d: ChatDeps,
+  threadText: string,
+  brief: string,
+  tone: ReplyTone,
+  extra: { subject: string; to: string; myEmail: string }
+): Promise<{ subject: string | null; body_text: string; body_html: string }> {
   const memory = memoryText(await listMemory(d.env, d.user.id));
-  const toneLine = tone === "formal" ? "Write formally and precisely." : tone === "friendly" ? "Write warmly and casually." : tone === "brief" ? "Keep it to a few sentences." : "Match the user's own voice from the memory notes (greeting, sign-off, length, phrasing).";
-  const res = await provider.complete({
+  const toneLine =
+    tone === "formal"
+      ? "Write formally and precisely."
+      : tone === "friendly"
+        ? "Write warmly and casually."
+        : tone === "brief"
+          ? "Keep it to a few sentences."
+          : "Match the user's own voice from the memory notes (greeting, sign-off, length, phrasing).";
+  const res = await completeAi(d.env, d.cfg, {
     maxTokens: 4000,
-    effort: "medium",
     schema: { name: "email_reply", zod: ReplySchema },
     system: `You write email replies on behalf of ${d.user.name || d.user.email} (${extra.myEmail}). ${toneLine}\n\nWhat you know about them:\n${memory}\n\nRules: reply to the latest message, answer what was asked, don't invent facts or commitments the user didn't state, no placeholders like [name], no quoted history, sign off the way they usually do.`,
-    messages: [{ role: "user", content: `Thread (oldest first):\n${threadText}\n\nReplying to: ${extra.to}\nSubject: ${extra.subject}\n\nWhat the user wants to say: ${brief}` }],
+    messages: [
+      {
+        role: "user",
+        content: `Thread (oldest first):\n${threadText}\n\nReplying to: ${extra.to}\nSubject: ${extra.subject}\n\nWhat the user wants to say: ${brief}`,
+      },
+    ],
   });
   if (res.refused) throw new Error("The model declined to write this reply.");
   const p = res.json ?? (res.text ? { subject: null, body_text: res.text } : null);
@@ -229,11 +79,14 @@ export async function generateReply(d: ChatDeps, threadText: string, brief: stri
 }
 
 export async function summarizeThread(d: ChatDeps, threadText: string, subject: string): Promise<string> {
-  const provider = makeProvider(d.cfg);
-  const res = await provider.complete({
+  const res = await completeAi(d.env, d.cfg, {
     maxTokens: 1200,
-    effort: "low",
-    messages: [{ role: "user", content: `Summarise this email thread for ${d.user.name || d.user.email}. Use 3–6 short bullet points: what it's about, decisions, open questions, and anything they need to do (with dates). Plain text bullets starting with "- ".\n\nSubject: ${subject}\n\n${threadText}` }],
+    messages: [
+      {
+        role: "user",
+        content: `Summarise this email thread for ${d.user.name || d.user.email}. Use 3–6 short bullet points: what it's about, decisions, open questions, and anything they need to do (with dates). Plain text bullets starting with "- ".\n\nSubject: ${subject}\n\n${threadText}`,
+      },
+    ],
   });
   if (res.refused) throw new Error("The model declined to summarise this thread.");
   return res.text.trim();
@@ -241,11 +94,19 @@ export async function summarizeThread(d: ChatDeps, threadText: string, subject: 
 
 export function textToHtml(text: string): string {
   const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  return text.trim().split(/\n{2,}/).map((p) => `<p>${esc(p).replace(/\n/g, "<br>")}</p>`).join("");
+  return text
+    .trim()
+    .split(/\n{2,}/)
+    .map((p) => `<p>${esc(p).replace(/\n/g, "<br>")}</p>`)
+    .join("");
 }
 
 /** Render a thread as plain text for the model, newest last, bodies trimmed. */
-export function threadToText(messages: { from: { name: string; email: string }; date: number; text_body: string; html_body: string; is_from_me: boolean }[], maxPer = 6000, maxMessages = 20): string {
+export function threadToText(
+  messages: { from: { name: string; email: string }; date: number; text_body: string; html_body: string; is_from_me: boolean }[],
+  maxPer = 6000,
+  maxMessages = 20
+): string {
   const slice = messages.slice(Math.max(0, messages.length - maxMessages));
   return slice
     .map((m) => {

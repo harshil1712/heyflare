@@ -4,9 +4,10 @@ import type { AppEnv } from "../env";
 import type { AccountRow, ThreadRow } from "../db";
 import { uid, now, accountForThread } from "../db";
 import { encryptSecret } from "../ai/crypto";
-import { PRESETS, MOCK_PRESET, presetById, loadAiSettings, loadAiConfig, makeProvider, describeApiError, AiNotConfigured } from "../ai/provider";
+import { PRESETS, MOCK_PRESET, presetById, loadAiSettings, loadAiConfig, describeApiError, AiNotConfigured } from "../ai/provider";
 import { listMemory, addMemory, updateMemory, deleteMemory, clearMemory, learnFromMail, type MemoryKind } from "../ai/memory";
-import { runChatTurn, generateReply, summarizeThread, threadToText, type ChatDeps, type ReplyTone, type SseEvent } from "../ai/chat";
+import { generateReply, summarizeThread, threadToText, type ChatDeps, type ReplyTone } from "../ai/chat";
+import { completeAi } from "../ai/model";
 import { loadThreadDetail } from "./mail";
 
 const ai = new Hono<AppEnv>();
@@ -23,33 +24,36 @@ async function deps(c: any): Promise<ChatDeps> {
   return { env: c.env, user, accounts: await userAccounts(c), cfg };
 }
 
-function shimFor(c: any, accounts: AccountRow[], acc: AccountRow | null) {
-  const ids = accounts.map((a) => a.id);
-  const vars: Record<string, unknown> = { user: c.get("user"), accountIds: ids, allAccountIds: ids, account: acc ?? accounts[0] ?? null };
-  return { env: c.env, get: (k: string) => vars[k], req: { param: () => undefined, query: (k: string) => (k === "peek" ? "1" : undefined), json: async () => ({}) }, executionCtx: { waitUntil() {} } } as any;
-}
-
 /* ---------- settings ---------- */
 
 ai.get("/settings", async (c) => {
   const user = c.get("user");
   const row = await loadAiSettings(c.env, user.id);
   const state = await c.env.DB.prepare(`SELECT last_learned_at FROM ai_learning_state WHERE user_id = ?`).bind(user.id).first<{ last_learned_at: number | null }>();
-  const preset = presetById(row?.preset ?? "anthropic");
+  const workersOk = !!c.env.AI;
+  const defaultPreset = workersOk ? "workers_ai" : "anthropic";
+  const preset = presetById(row?.preset ?? defaultPreset);
   const mockOk = c.env.AI_MOCK === "1";
-  const configured = !!row && (preset.kind === "mock" ? mockOk : preset.kind === "anthropic" ? !!row.api_key_enc : preset.id === "custom" ? !!row.base_url : true);
+  const configured =
+    preset.kind === "workers_ai"
+      ? workersOk
+      : !!row && (preset.kind === "mock" ? mockOk : preset.kind === "anthropic" ? !!row.api_key_enc : preset.id === "custom" ? !!row.base_url : !!row.api_key_enc);
+  // If nothing configured but Workers AI is bound, treat as ready (zero-config).
+  const effectivelyConfigured = configured || (workersOk && (!row || !row.api_key_enc));
+  const presets = mockOk ? [...PRESETS, MOCK_PRESET] : PRESETS.filter((p) => (p.id === "workers_ai" ? workersOk : true));
   return c.json({
-    configured,
-    provider: preset.kind,
-    preset: preset.id,
+    configured: effectivelyConfigured,
+    provider: effectivelyConfigured && !configured && workersOk ? "workers_ai" : preset.kind,
+    preset: effectivelyConfigured && !row ? "workers_ai" : preset.id,
     base_url: preset.id === "custom" ? row?.base_url ?? "" : preset.base_url,
     key_hint: row?.key_hint ?? "",
-    model: row?.model || preset.default_model,
+    model: row?.model || (workersOk ? "@cf/zai-org/glm-5.3" : preset.default_model),
     learn: row ? !!row.learn : true,
     auto_send: row ? !!row.auto_send : false,
-    presets: mockOk ? [...PRESETS, MOCK_PRESET] : PRESETS,
+    presets,
     last_learned_at: state?.last_learned_at ?? null,
     server_ready: true,
+    workers_ai: workersOk,
   });
 });
 
@@ -57,12 +61,16 @@ ai.put("/settings", async (c) => {
   const user = c.get("user");
   const b = await c.req.json<{ preset?: string; base_url?: string; api_key?: string | null; model?: string; learn?: boolean; auto_send?: boolean }>().catch(() => ({}) as any);
   const cur = await loadAiSettings(c.env, user.id);
-  const wantedPreset = typeof b.preset === "string" ? b.preset : cur?.preset ?? "anthropic";
+  const wantedPreset = typeof b.preset === "string" ? b.preset : cur?.preset ?? (c.env.AI ? "workers_ai" : "anthropic");
   if (wantedPreset === "mock" && c.env.AI_MOCK !== "1") return c.json({ error: "unknown_preset" }, 400);
+  if (wantedPreset === "workers_ai" && !c.env.AI) return c.json({ error: "workers_ai_unavailable" }, 400);
   const preset = presetById(wantedPreset);
   let enc = cur?.api_key_enc ?? "";
   let hint = cur?.key_hint ?? "";
-  if (typeof b.api_key === "string") {
+  if (preset.kind === "workers_ai") {
+    enc = "";
+    hint = "";
+  } else if (typeof b.api_key === "string") {
     const key = b.api_key.trim();
     if (key) {
       if (key.length < 8) return c.json({ error: "invalid_key" }, 400);
@@ -97,8 +105,7 @@ ai.put("/settings", async (c) => {
 ai.post("/settings/test", async (c) => {
   try {
     const d = await deps(c);
-    const provider = makeProvider(d.cfg);
-    const r = await provider.complete({ maxTokens: 20, effort: "low", messages: [{ role: "user", content: "Reply with the single word: ready" }] });
+    const r = await completeAi(d.env, d.cfg, { maxTokens: 20, messages: [{ role: "user", content: "Reply with the single word: ready" }] });
     return c.json({ ok: true, model: d.cfg.model, reply: r.text.trim().slice(0, 40) });
   } catch (e) {
     return c.json({ ok: false, error: describeApiError(e) }, 400);
@@ -147,8 +154,8 @@ ai.post("/conversations", async (c) => {
 ai.get("/conversations/:id", async (c) => {
   const conv = await c.env.DB.prepare(`SELECT id, title, created_at, updated_at FROM ai_conversations WHERE id = ? AND user_id = ?`).bind(c.req.param("id"), c.get("user").id).first();
   if (!conv) return c.json({ error: "not_found" }, 404);
-  const msgs = await c.env.DB.prepare(`SELECT id, role, content_json, created_at FROM ai_messages WHERE conversation_id = ? ORDER BY created_at ASC`).bind(c.req.param("id")).all<{ id: string; role: string; content_json: string; created_at: number }>();
-  return c.json({ conversation: conv, messages: msgs.results.map((m) => ({ id: m.id, role: m.role, content: JSON.parse(m.content_json), created_at: m.created_at })) });
+  // Transcript lives in the Think AssistantAgent DO — not D1.
+  return c.json({ conversation: conv });
 });
 ai.patch("/conversations/:id", async (c) => {
   const b = await c.req.json<{ title?: string }>().catch(() => ({}) as any);
@@ -156,69 +163,13 @@ ai.patch("/conversations/:id", async (c) => {
   return c.json({ ok: true });
 });
 ai.delete("/conversations/:id", async (c) => {
-  await c.env.DB.prepare(`DELETE FROM ai_conversations WHERE id = ? AND user_id = ?`).bind(c.req.param("id"), c.get("user").id).run();
+  const id = c.req.param("id");
+  const userId = c.get("user").id;
+  const own = await c.env.DB.prepare(`SELECT id FROM ai_conversations WHERE id = ? AND user_id = ?`).bind(id, userId).first();
+  if (!own) return c.json({ error: "not_found" }, 404);
+  await c.env.DB.prepare(`DELETE FROM ai_messages WHERE conversation_id = ?`).bind(id).run();
+  await c.env.DB.prepare(`DELETE FROM ai_conversations WHERE id = ? AND user_id = ?`).bind(id, userId).run();
   return c.json({ ok: true });
-});
-
-/* ---------- chat (SSE) ---------- */
-
-ai.post("/chat", async (c) => {
-  const b = await c.req.json<{ conversation_id?: string; message?: string; context_thread_ids?: string[] }>().catch(() => ({}) as any);
-  const text = String(b.message ?? "").trim().slice(0, 20_000);
-  if (!text) return c.json({ error: "message_required" }, 400);
-  let d: ChatDeps;
-  try {
-    d = await deps(c);
-  } catch (e) {
-    return c.json({ error: describeApiError(e), code: "ai_not_configured" }, 400);
-  }
-  // Attached threads → compact context blocks (subject, participants, last 3 messages), max 3 threads.
-  const contextBlocks: string[] = [];
-  const ctxIds: string[] = Array.isArray(b.context_thread_ids) ? (b.context_thread_ids as unknown[]).filter((x): x is string => typeof x === "string").slice(0, 3) : [];
-  for (const tid of ctxIds) {
-    const t = await threadForAi(c, d, tid).catch(() => null);
-    if (!t) continue;
-    const people = t.detail.participants.map((p) => (p.name ? `${p.name} <${p.email}>` : p.email)).join(", ");
-    const lastFrom = t.detail.last_from.name || t.detail.last_from.email;
-    const body = threadToText(t.detail.messages.slice(-3), 2000, 3);
-    contextBlocks.push(`[[context thread=${tid}]] Subject: ${t.detail.subject || "(no subject)"} · From: ${lastFrom}\nParticipants: ${people}\nAccount: ${t.acc.email}\n\n${body}`);
-  }
-  let convId = typeof b.conversation_id === "string" ? b.conversation_id : "";
-  if (convId) {
-    const own = await c.env.DB.prepare(`SELECT id FROM ai_conversations WHERE id = ? AND user_id = ?`).bind(convId, d.user.id).first();
-    if (!own) convId = "";
-  }
-  if (!convId) {
-    convId = uid();
-    await c.env.DB.prepare(`INSERT INTO ai_conversations (id, user_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`).bind(convId, d.user.id, text.slice(0, 60), now(), now()).run();
-  } else {
-    await c.env.DB.prepare(`UPDATE ai_conversations SET title = CASE WHEN title = '' THEN ? ELSE title END WHERE id = ?`).bind(text.slice(0, 60), convId).run();
-  }
-
-  const { readable, writable } = new TransformStream<Uint8Array>();
-  const writer = writable.getWriter();
-  const encoder = new TextEncoder();
-  let closed = false;
-  const send = async (e: SseEvent) => {
-    if (closed) return;
-    try {
-      await writer.write(encoder.encode(`data: ${JSON.stringify(e)}\n\n`));
-    } catch {
-      closed = true;
-    }
-  };
-  const abort = new AbortController();
-  c.req.raw.signal?.addEventListener("abort", () => abort.abort());
-  const run = (async () => {
-    await send({ type: "start", conversation_id: convId });
-    await runChatTurn(d, convId, text, send, abort.signal, contextBlocks);
-    closed = true;
-    try {
-      await writer.close();
-    } catch {}
-  })();
-  c.executionCtx.waitUntil(run);
-  return new Response(readable, { headers: { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-cache, no-transform", "x-accel-buffering": "no", "x-conversation-id": convId } });
 });
 
 /* ---------- reply / summarize ---------- */
@@ -226,7 +177,7 @@ ai.post("/chat", async (c) => {
 async function threadForAi(c: any, d: ChatDeps, threadId: string) {
   const acc = await accountForThread(c.env.DB, d.user.id, threadId);
   if (!acc) return null;
-  const detail = await loadThreadDetail(shimFor(c, d.accounts, acc), threadId);
+  const detail = await loadThreadDetail(c.env.DB, d.user.id, threadId);
   if (!detail) return null;
   return { acc, detail };
 }

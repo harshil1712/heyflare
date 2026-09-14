@@ -20,10 +20,12 @@ export interface Env {
   AI_MOCK?: string;
   /** Cloudflare Email Sending binding (`send_email`), when enabled on the account. */
   EMAIL?: { send(msg: any): Promise<any> };
-  /** Workers AI binding — used for domain-mailbox spam triage (Gemma 4). */
+  /** Workers AI binding — spam triage + assistant (via workers-ai-provider). */
   AI?: Ai;
   /** Per-account sync coordinator (Phase 2). */
   SYNC_ACTOR?: DurableObjectNamespace<import("./sync-actor").SyncActor>;
+  /** Think-based email assistant (one DO instance per conversation). */
+  AssistantAgent?: DurableObjectNamespace<import("./ai/assistant-agent").AssistantAgent>;
   /** Shared secret for Pub/Sub push verification (`?token=` or Bearer). */
   PUBSUB_VERIFICATION_TOKEN?: string;
   /** Gmail users.watch topic, e.g. `projects/my-proj/topics/heyflare-mail`. */

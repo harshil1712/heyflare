@@ -565,15 +565,6 @@ export function useAiMemory() {
 export function useAiConversations() {
   return useQuery({ queryKey: ["ai", "conversations"], queryFn: () => api.get<T.AiConversation[]>("/api/ai/conversations"), staleTime: 10_000 });
 }
-export interface AiStoredMessage {
-  id: string;
-  role: "user" | "assistant";
-  content: unknown[];
-  created_at: number;
-}
-export function useAiConversation(id: string | undefined) {
-  return useQuery({ queryKey: ["ai", "conversation", id ?? ""], queryFn: () => api.get<{ conversation: T.AiConversation; messages: AiStoredMessage[] }>(`/api/ai/conversations/${id}`), enabled: !!id });
-}
 export function useAiMutations() {
   const qc = useQueryClient();
   const invSettings = () => qc.invalidateQueries({ queryKey: ["ai", "settings"] });
@@ -593,46 +584,6 @@ export function useAiMutations() {
     reply: useMutation({ mutationFn: (b: { thread_id: string; brief: string; tone?: "match" | "formal" | "friendly" | "brief" }) => api.post<{ subject: string | null; body_text: string; body_html: string; reply_to_message_id: string | null }>("/api/ai/reply", b) }),
     summarize: useMutation({ mutationFn: (thread_id: string) => api.post<{ summary: string }>("/api/ai/summarize", { thread_id }) }),
   };
-}
-
-export type AiSseEvent =
-  | { type: "start"; conversation_id: string }
-  | { type: "text"; text: string }
-  | { type: "tool"; id: string; name: string; status: "running" | "done" | "error"; summary: string }
-  | { type: "draft"; draft: T.AiDraftCard }
-  | { type: "sent"; draft_id: string; thread_id: string }
-  | { type: "done"; conversation_id: string }
-  | { type: "error"; message: string };
-
-/** Streams one assistant turn. Resolves when the server sends `done` (or the stream ends). */
-export async function aiChatStream(body: { conversation_id?: string; message: string; context_thread_ids?: string[] }, onEvent: (e: AiSseEvent) => void, signal?: AbortSignal): Promise<void> {
-  const res = await fetch("/api/ai/chat", { method: "POST", headers: { "Content-Type": "application/json", "X-Account-Id": getScope() }, credentials: "include", body: JSON.stringify(body), signal });
-  if (!res.ok || !res.body) {
-    let msg = res.statusText;
-    try {
-      const j = (await res.json()) as { error?: string };
-      msg = j.error || msg;
-    } catch {}
-    throw new ApiError(res.status, msg);
-  }
-  const reader = res.body.getReader();
-  const dec = new TextDecoder();
-  let buf = "";
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buf += dec.decode(value, { stream: true });
-    let idx: number;
-    while ((idx = buf.indexOf("\n\n")) >= 0) {
-      const chunk = buf.slice(0, idx);
-      buf = buf.slice(idx + 2);
-      const line = chunk.split("\n").find((l) => l.startsWith("data: "));
-      if (!line) continue;
-      try {
-        onEvent(JSON.parse(line.slice(6)) as AiSseEvent);
-      } catch {}
-    }
-  }
 }
 
 // ---------- Power through new ----------

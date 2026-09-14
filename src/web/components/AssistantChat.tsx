@@ -3,8 +3,11 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { ArrowUp, Check, Loader2, Paperclip, PenSquare, Plus, Send, Sparkles, Square, TriangleAlert, X } from "lucide-react";
 import { toast } from "sonner";
+import { useAgent } from "agents/react";
+import { getToolPartState, getToolOutput, useAgentChat } from "@cloudflare/ai-chat/react";
+import { getToolName, isToolUIPart, type UIMessage } from "ai";
 import type { AiDraftCard } from "@shared/types";
-import { aiChatStream, api, useAiConversation, useAiSettings, type AiSseEvent } from "../api";
+import { api, useAiMutations, useAiSettings } from "../api";
 import { useCompose } from "../context/ComposeContext";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -151,33 +154,6 @@ interface Turn {
   error?: string;
 }
 
-function turnsFromStored(messages: { id: string; role: "user" | "assistant"; content: unknown[] }[]): Turn[] {
-  const out: Turn[] = [];
-  for (const m of messages) {
-    const blocks = Array.isArray(m.content) ? (m.content as any[]) : [];
-    if (m.role === "user") {
-      const ctx: ContextChip[] = [];
-      const texts: string[] = [];
-      for (const b of blocks) {
-        if (b.type !== "text" || typeof b.text !== "string") continue;
-        const m2 = /^\[\[context thread=([^\]]+)\]\] Subject: (.*?) · From: (.*?)(?:\n|$)/.exec(b.text);
-        if (m2) ctx.push({ id: m2[1], subject: m2[2], from: m2[3] });
-        else texts.push(b.text);
-      }
-      const text = texts.join("\n");
-      if (text.trim()) out.push({ id: m.id, role: "user", text, context: ctx, tools: [], drafts: [], sent: {} });
-      continue;
-    }
-    const last = out[out.length - 1];
-    const target = last && last.role === "assistant" ? last : (out.push({ id: m.id, role: "assistant", text: "", tools: [], drafts: [], sent: {} }), out[out.length - 1]);
-    for (const b of blocks) {
-      if (b.type === "text") target.text += (target.text ? "\n\n" : "") + b.text;
-      else if (b.type === "tool_use") target.tools.push({ id: b.id, status: "done", summary: toolLabel(b.name, b.input) });
-    }
-  }
-  return out;
-}
-
 function toolLabel(name: string, input: any): string {
   switch (name) {
     case "search_mail": return `Searched mail for “${input?.query ?? ""}”`;
@@ -216,123 +192,228 @@ export function AssistantChat({
   conversationId?: string;
   onConversationId: (id: string) => void;
   compact?: boolean;
-  /** Threads attached as context for the next message (panel mode). */
   context?: ContextChip[];
   onRemoveContext?: (id: string) => void;
-  /** Opens the thread picker ("+" button and typing "@"). */
   onAddContext?: () => void;
   autoFocus?: boolean; onClose?: () => void }) {
   const settings = useAiSettings();
-  const conv = useAiConversation(conversationId);
+  const m = useAiMutations();
   const qc = useQueryClient();
-  const [turns, setTurns] = useState<Turn[]>([]);
-  const [live, setLiveState] = useState<Turn | null>(null);
-  const liveRef = useRef<Turn | null>(null);
-  /** Keep the streaming turn in a ref too, so events (which arrive outside React's batching) never race a stale closure. */
-  const setLive = (next: Turn | null | ((l: Turn | null) => Turn | null)) => {
-    liveRef.current = typeof next === "function" ? next(liveRef.current) : next;
-    setLiveState(liveRef.current);
-  };
   const [input, setInput] = useState("");
-  const [busy, setBusy] = useState(false);
-  const abortRef = useRef<AbortController | null>(null);
+  const [pendingId, setPendingId] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const activeId = conversationId || pendingId || undefined;
+  const notConfigured = settings.data && !settings.data.configured;
 
-  /**
-   * Grow the box to fit what is in it.
-   *
-   * Counting newlines — which is what this did — only sees the lines someone typed deliberately.
-   * A long sentence with no break in it wraps onto four visual lines while still being one string,
-   * so the field stayed a single row and the message scrolled out of sight as it was written.
-   * Only the browser knows how the text actually wrapped, and `scrollHeight` is where it says so:
-   * collapse the height first, or a box that has grown can never measure itself smaller again.
-   */
   useLayoutEffect(() => {
     const el = inputRef.current;
     if (!el) return;
     el.style.height = "auto";
     el.style.height = `${Math.min(el.scrollHeight, INPUT_MAX_PX)}px`;
   }, [input]);
-  /** Conversation whose turns are held locally (streamed here); server data must not overwrite them mid-flight or drop transient errors. */
-  const streamedConv = useRef<string | null>(null);
-  const busyRef = useRef(false);
+
+  if (!activeId) {
+    return (
+      <AssistantShell
+        compact={compact}
+        notConfigured={!!notConfigured}
+        input={input}
+        setInput={setInput}
+        inputRef={inputRef}
+        autoFocus={autoFocus}
+        onClose={onClose}
+        onAddContext={onAddContext}
+        context={context}
+        onRemoveContext={onRemoveContext}
+        busy={false}
+        onStop={() => {}}
+        onSend={async (text) => {
+          const msg = text.trim();
+          if (!msg || notConfigured) return;
+          setInput("");
+          try {
+            const conv = await m.newConversation.mutateAsync();
+            setPendingId(conv.id);
+            onConversationId(conv.id);
+            // Chat connects on next paint with this id; stash pending send.
+            pendingSend.set(conv.id, { text: msg, context: context.slice(0, 3) });
+            if (onRemoveContext) for (const c of context.slice(0, 3)) onRemoveContext(c.id);
+          } catch (e) {
+            toast.error((e as Error).message);
+            setInput(msg);
+          }
+        }}
+        messages={[]}
+        isStreaming={false}
+      />
+    );
+  }
+
+  return (
+    <AssistantAgentChat
+      key={activeId}
+      conversationId={activeId}
+      compact={compact}
+      notConfigured={!!notConfigured}
+      input={input}
+      setInput={setInput}
+      inputRef={inputRef}
+      bottomRef={bottomRef}
+      autoFocus={autoFocus}
+      onClose={onClose}
+      onAddContext={onAddContext}
+      context={context}
+      onRemoveContext={onRemoveContext}
+      onSent={() => {
+        qc.invalidateQueries({ queryKey: ["ai", "conversations"] });
+        qc.invalidateQueries({ predicate: (q) => ["imbox", "threads", "counts", "screener", "thread", "feed"].includes(String(q.queryKey[0])) });
+      }}
+    />
+  );
+}
+
+/** First-message handoff before the WebSocket agent exists. */
+const pendingSend = new Map<string, { text: string; context: ContextChip[] }>();
+
+function AssistantAgentChat({
+  conversationId,
+  compact,
+  notConfigured,
+  input,
+  setInput,
+  inputRef,
+  bottomRef,
+  autoFocus,
+  onClose,
+  onAddContext,
+  context,
+  onRemoveContext,
+  onSent,
+}: {
+  conversationId: string;
+  compact?: boolean;
+  notConfigured: boolean;
+  input: string;
+  setInput: (v: string) => void;
+  inputRef: React.RefObject<HTMLTextAreaElement | null>;
+  bottomRef: React.RefObject<HTMLDivElement | null>;
+  autoFocus?: boolean;
+  onClose?: () => void;
+  onAddContext?: () => void;
+  context: ContextChip[];
+  onRemoveContext?: (id: string) => void;
+  onSent: () => void;
+}) {
+  const agent = useAgent({ agent: "AssistantAgent", name: conversationId });
+  const contextRef = useRef(context);
+  contextRef.current = context;
+  const { messages, sendMessage, stop, status, isStreaming, error } = useAgentChat({
+    agent,
+    body: () => ({
+      context_thread_ids: contextRef.current.slice(0, 3).map((c) => c.id),
+    }),
+  });
 
   useEffect(() => {
-    if (busyRef.current) return;
-    if (conv.data) {
-      if (conv.data.conversation.id === streamedConv.current) return;
-      setTurns(turnsFromStored(conv.data.messages as any));
-    } else if (!conversationId) {
-      streamedConv.current = null;
-      setTurns([]);
-    }
-  }, [conv.data, conversationId]);
+    const pending = pendingSend.get(conversationId);
+    if (!pending) return;
+    pendingSend.delete(conversationId);
+    void sendMessage({ text: pending.text }).then(() => onSent());
+  }, [conversationId, sendMessage, onSent]);
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: "end" });
-  }, [turns, live?.text, live?.tools.length]);
+  }, [messages, isStreaming, bottomRef]);
 
-  const send = async (text: string) => {
-    const msg = text.trim();
-    if (!msg || busy) return;
-    setInput("");
-    setBusy(true);
-    busyRef.current = true;
-    if (conversationId) streamedConv.current = conversationId;
-    const ctx = context.slice(0, 3);
-    const userTurn: Turn = { id: `u-${Date.now()}`, role: "user", text: msg, context: ctx, tools: [], drafts: [], sent: {} };
-    const assistant: Turn = { id: `a-${Date.now()}`, role: "assistant", text: "", tools: [], drafts: [], sent: {} };
-    setTurns((t) => [...t, userTurn]);
-    setLive(assistant);
-    const ac = new AbortController();
-    abortRef.current = ac;
-    let convId = conversationId;
-    try {
-      await aiChatStream(
-        { conversation_id: conversationId, message: msg, context_thread_ids: ctx.length ? ctx.map((c) => c.id) : undefined },
-        (e: AiSseEvent) => {
-          if (e.type === "start") {
-            convId = e.conversation_id;
-            streamedConv.current = e.conversation_id;
-            if (!conversationId) onConversationId(e.conversation_id);
-          } else if (e.type === "text") setLive((l) => (l ? { ...l, text: l.text + e.text } : l));
-          else if (e.type === "tool") setLive((l) => (l ? { ...l, tools: l.tools.some((x) => x.id === e.id) ? l.tools.map((x) => (x.id === e.id ? { ...x, status: e.status, summary: e.summary } : x)) : [...l.tools, { id: e.id, status: e.status, summary: e.summary }] } : l));
-          else if (e.type === "draft") setLive((l) => (l ? { ...l, drafts: [...l.drafts, e.draft] } : l));
-          else if (e.type === "sent") setLive((l) => (l ? { ...l, sent: { ...l.sent, [e.draft_id]: e.thread_id } } : l));
-          else if (e.type === "error") setLive((l) => (l ? { ...l, error: e.message } : l));
-        },
-        ac.signal
-      );
-    } catch (e) {
-      if (!ac.signal.aborted) setLive((l) => (l ? { ...l, error: (e as Error).message } : { ...assistant, error: (e as Error).message }));
-    }
-    const finished = liveRef.current;
-    if (finished) setTurns((t) => [...t, finished]);
-    setLive(null);
-    busyRef.current = false;
-    setBusy(false);
-    abortRef.current = null;
-    if (onRemoveContext) for (const c of ctx) onRemoveContext(c.id);
-    qc.invalidateQueries({ queryKey: ["ai", "conversations"] });
-    if (convId) qc.invalidateQueries({ queryKey: ["ai", "conversation", convId] });
-    qc.invalidateQueries({ predicate: (q) => ["imbox", "threads", "counts", "screener", "thread", "feed"].includes(String(q.queryKey[0])) });
-  };
+  const busy = isStreaming || status === "submitted";
 
-  const stop = () => abortRef.current?.abort();
-  const notConfigured = settings.data && !settings.data.configured;
-  const all = live ? [...turns, live] : turns;
+  return (
+    <AssistantShell
+      compact={compact}
+      notConfigured={notConfigured}
+      input={input}
+      setInput={setInput}
+      inputRef={inputRef}
+      autoFocus={autoFocus}
+      onClose={onClose}
+      onAddContext={onAddContext}
+      context={context}
+      onRemoveContext={onRemoveContext}
+      busy={busy}
+      onStop={() => stop()}
+      onSend={async (text) => {
+        const msg = text.trim();
+        if (!msg || busy || notConfigured) return;
+        setInput("");
+        const ctx = context.slice(0, 3);
+        try {
+          await sendMessage({ text: msg });
+          if (onRemoveContext) for (const c of ctx) onRemoveContext(c.id);
+          onSent();
+        } catch (e) {
+          toast.error((e as Error).message);
+          setInput(msg);
+        }
+      }}
+      messages={messages}
+      isStreaming={busy}
+      error={error?.message}
+    />
+  );
+}
+
+function AssistantShell({
+  compact,
+  notConfigured,
+  input,
+  setInput,
+  inputRef,
+  autoFocus,
+  onClose,
+  onAddContext,
+  context,
+  onRemoveContext,
+  busy,
+  onStop,
+  onSend,
+  messages,
+  isStreaming,
+  error,
+}: {
+  compact?: boolean;
+  notConfigured: boolean;
+  input: string;
+  setInput: (v: string) => void;
+  inputRef: React.RefObject<HTMLTextAreaElement | null>;
+  autoFocus?: boolean;
+  onClose?: () => void;
+  onAddContext?: () => void;
+  context: ContextChip[];
+  onRemoveContext?: (id: string) => void;
+  busy: boolean;
+  onStop: () => void;
+  onSend: (text: string) => void | Promise<void>;
+  messages: UIMessage[];
+  isStreaming: boolean;
+  error?: string;
+}) {
+  const bottomRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ block: "end" });
+  }, [messages, isStreaming]);
 
   return (
     <div className="flex flex-col h-full min-h-0">
       <div className={cn("flex-1 min-h-0 overflow-y-auto", compact ? "px-4" : "px-2")}>
-        {all.length === 0 && (
+        {messages.length === 0 && (
           <div className={cn("pb-6 text-center", compact ? "pt-6" : "pt-10")}>
             <Sparkles className="size-6 mx-auto text-muted-foreground" />
             <div className="mt-3 text-[15px] font-medium">What can I do for you?</div>
             <div className="text-[13px] text-muted-foreground mt-1">I can read, search and organise your mail, screen senders, and write drafts for you to send.</div>
             {notConfigured && (
               <div className="mt-4 text-[13px]">
-                <Link to="/settings#ai" className="underline underline-offset-2">Add your Anthropic API key</Link> to get started.
+                <Link to="/settings#ai" className="underline underline-offset-2">Configure AI</Link> to get started.
               </div>
             )}
             {!notConfigured && (
@@ -345,32 +426,16 @@ export function AssistantChat({
           </div>
         )}
         <div className="py-4 space-y-5">
-          {all.map((t) => (
-            <div key={t.id} className={cn("flex", t.role === "user" ? "justify-end" : "justify-start")}>
-              {t.role === "user" ? (
-                <div className="max-w-[85%]">
-                  {!!t.context?.length && (
-                    <div className="flex flex-wrap justify-end gap-1 mb-1">
-                      {t.context.map((c) => (
-                        <Link key={c.id} to={`/t/${c.id}`} className="inline-flex items-center gap-1 rounded-md bg-muted/60 px-2 h-6 text-[12px] text-muted-foreground max-w-[220px]">
-                          <Paperclip className="size-3 shrink-0" />
-                          <span className="truncate">{c.subject || "(no subject)"}</span>
-                        </Link>
-                      ))}
-                    </div>
-                  )}
-                  <div className="rounded-2xl rounded-br-md bg-muted px-3.5 py-2 text-[14px] leading-6 whitespace-pre-wrap">{t.text}</div>
-                </div>
-              ) : (
-                <div className="max-w-[92%] min-w-0">
-                  {t.tools.length > 0 && <div className="mb-1">{t.tools.map((x) => <ToolLine key={x.id} status={x.status} summary={x.summary} />)}</div>}
-                  {t.text ? <Prose text={t.text} /> : t === live && !t.error ? <ThinkingDots /> : null}
-                  {t.drafts.map((d) => <DraftCard key={d.draft_id} d={d} sentThreadId={t.sent[d.draft_id]} />)}
-                  {t.error && <div className="mt-2 flex items-start gap-2 rounded-md bg-muted/60 px-3 py-2 text-[13px]"><TriangleAlert className="size-4 shrink-0 mt-0.5 text-muted-foreground" /><span>{t.error}{/API key/i.test(t.error) && <> · <Link to="/settings#ai" className="underline underline-offset-2">Settings → AI</Link></>}</span></div>}
-                </div>
-              )}
-            </div>
+          {messages.map((msg) => (
+            <MessageBubble key={msg.id} message={msg} />
           ))}
+          {isStreaming && messages.at(-1)?.role !== "assistant" && <ThinkingDots />}
+          {error && (
+            <div className="flex items-start gap-2 rounded-md bg-muted/60 px-3 py-2 text-[13px]">
+              <TriangleAlert className="size-4 shrink-0 mt-0.5 text-muted-foreground" />
+              <span>{error}</span>
+            </div>
+          )}
           <div ref={bottomRef} />
         </div>
       </div>
@@ -378,7 +443,7 @@ export function AssistantChat({
         className={cn("shrink-0 pt-2", compact ? "px-4 pb-3" : "px-2 pb-2")}
         onSubmit={(e) => {
           e.preventDefault();
-          send(input);
+          void onSend(input);
         }}
       >
         <div className="rounded-xl bg-muted/60 focus-within:bg-muted px-3 py-2">
@@ -398,57 +463,126 @@ export function AssistantChat({
               ))}
             </div>
           )}
-        <div className="flex items-end gap-2">
-          {onAddContext && (
-            <Button type="button" size="icon-sm" variant="ghost" className="text-muted-foreground shrink-0" onClick={onAddContext} aria-label="Add a thread as context" disabled={!!notConfigured}>
-              <Plus />
-            </Button>
-          )}
-          <textarea
-            ref={inputRef}
-            data-assistant-input
-            autoFocus={autoFocus}
-            value={input}
-            onChange={(e) => {
-              const v = e.target.value;
-              // "@" opens the thread picker only when it starts a word — otherwise you could never
-              // type an email address (issue #2). The character is always kept.
-              const startsWord = v.length === 1 || /\s$/.test(v.slice(0, -1));
-              if (onAddContext && v.endsWith("@") && !input.endsWith("@") && startsWord) {
+          <div className="flex items-end gap-2">
+            {onAddContext && (
+              <Button type="button" size="icon-sm" variant="ghost" className="text-muted-foreground shrink-0" onClick={onAddContext} aria-label="Add a thread as context" disabled={!!notConfigured}>
+                <Plus />
+              </Button>
+            )}
+            <textarea
+              ref={inputRef}
+              data-assistant-input
+              autoFocus={autoFocus}
+              value={input}
+              onChange={(e) => {
+                const v = e.target.value;
+                const startsWord = v.length === 1 || /\s$/.test(v.slice(0, -1));
+                if (onAddContext && v.endsWith("@") && !input.endsWith("@") && startsWord) {
+                  setInput(v);
+                  onAddContext();
+                  return;
+                }
                 setInput(v);
-                onAddContext();
-                return;
-              }
-              setInput(v);
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-                e.preventDefault();
-                send(input);
-                return;
-              }
-              // Left from an empty box leaves the assistant: close it and hand focus back to the list.
-              if (e.key === "ArrowLeft" && !input) {
-                e.preventDefault();
-                (e.target as HTMLTextAreaElement).blur();
-                focus.toContent();
-                if (onClose) onClose();
-              }
-            }}
-            rows={1}
-            placeholder={notConfigured ? "Add an API key in Settings → AI first" : onAddContext ? "Ask about your mail, @ for context" : "Ask about your mail, or tell me what to write…"}
-            disabled={!!notConfigured}
-            className="flex-1 resize-none overflow-y-auto bg-transparent outline-none text-[14px] leading-6 placeholder:text-muted-foreground"
-          />
-          {busy ? (
-            <Button type="button" size="icon-sm" variant="ghost" onClick={stop} aria-label="Stop"><Square className="size-3.5" /></Button>
-          ) : (
-            <Button type="submit" size="icon-sm" disabled={!input.trim() || !!notConfigured} aria-label="Send"><ArrowUp /></Button>
-          )}
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                  e.preventDefault();
+                  void onSend(input);
+                  return;
+                }
+                if (e.key === "ArrowLeft" && !input) {
+                  e.preventDefault();
+                  (e.target as HTMLTextAreaElement).blur();
+                  focus.toContent();
+                  if (onClose) onClose();
+                }
+              }}
+              placeholder={notConfigured ? "Configure AI in Settings…" : "Ask about your mail…"}
+              disabled={!!notConfigured}
+              rows={1}
+              className="flex-1 min-w-0 resize-none bg-transparent outline-none text-[14px] leading-6 placeholder:text-muted-foreground max-h-[160px] overflow-y-auto py-1"
+            />
+            {busy ? (
+              <Button type="button" size="icon-sm" variant="ghost" onClick={onStop} aria-label="Stop">
+                <Square />
+              </Button>
+            ) : (
+              <Button type="submit" size="icon-sm" disabled={!input.trim() || !!notConfigured} aria-label="Send">
+                <ArrowUp />
+              </Button>
+            )}
+          </div>
         </div>
-        </div>
-        <div className="text-[11px] text-muted-foreground mt-1.5 px-1">Drafts are never sent without you{settings.data?.auto_send ? ", unless you allowed it in Settings → AI" : ""}. Enter to send, Shift+Enter for a new line.</div>
       </form>
     </div>
   );
+}
+
+function MessageBubble({ message }: { message: UIMessage }) {
+  const text = message.parts.filter((p): p is { type: "text"; text: string } => p.type === "text").map((p) => p.text).join("\n\n");
+  const tools = message.parts.filter((p) => isToolUIPart(p));
+  const drafts: AiDraftCard[] = [];
+  for (const p of tools) {
+    const name = getToolName(p as any);
+    if (name !== "create_draft") continue;
+    let out: unknown = getToolOutput(p as any);
+    if (out && typeof out === "object" && "type" in (out as any) && (out as any).type === "text" && "value" in (out as any)) {
+      out = (out as any).value;
+    }
+    const raw = typeof out === "string" ? safeParse(out) : out;
+    const draft = (raw as any)?.draft || raw;
+    if (draft?.draft_id && draft?.to) drafts.push(draft as AiDraftCard);
+  }
+
+  if (message.role === "user") {
+    const ctx: ContextChip[] = [];
+    const texts: string[] = [];
+    for (const line of text.split("\n")) {
+      const m2 = /^\[\[context thread=([^\]]+)\]\] Subject: (.*?) · From: (.*?)(?:\n|$)/.exec(line);
+      if (m2) ctx.push({ id: m2[1], subject: m2[2], from: m2[3] });
+      else if (!line.startsWith("[[context")) texts.push(line);
+    }
+    const display = texts.join("\n").trim() || text;
+    return (
+      <div className="flex justify-end">
+        <div className="max-w-[85%]">
+          {!!ctx.length && (
+            <div className="flex flex-wrap justify-end gap-1 mb-1">
+              {ctx.map((c) => (
+                <Link key={c.id} to={`/t/${c.id}`} className="inline-flex items-center gap-1 rounded-md bg-muted/60 px-2 h-6 text-[12px] text-muted-foreground max-w-[220px]">
+                  <Paperclip className="size-3 shrink-0" />
+                  <span className="truncate">{c.subject || "(no subject)"}</span>
+                </Link>
+              ))}
+            </div>
+          )}
+          <div className="rounded-2xl rounded-br-md bg-muted px-3.5 py-2 text-[14px] leading-6 whitespace-pre-wrap">{display}</div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex justify-start">
+      <div className="max-w-[92%] min-w-0">
+        {tools.length > 0 && (
+          <div className="mb-1">
+            {tools.map((p, i) => {
+              const name = getToolName(p as any);
+              const state = getToolPartState(p);
+              const status = state === "complete" ? "done" : state === "error" ? "error" : "running";
+              const input = (p as any).input;
+              return <ToolLine key={(p as any).toolCallId || i} status={status as any} summary={toolLabel(name, input)} />;
+            })}
+          </div>
+        )}
+        {text ? <Prose text={text} /> : tools.length === 0 ? <ThinkingDots /> : null}
+        {drafts.map((d) => <DraftCard key={d.draft_id} d={d} />)}
+      </div>
+    </div>
+  );
+}
+
+function safeParse(s: string) {
+  try { return JSON.parse(s); } catch { return null; }
 }

@@ -1,14 +1,16 @@
 // Tools the assistant can call. Every tool is scoped to the signed-in user's accounts.
 import { searchThreads } from "../fts";
-import type Anthropic from "@anthropic-ai/sdk";
+import { tool, type ToolSet } from "ai";
+import { z } from "zod";
 import type { Env } from "../env";
 import type { AccountRow, ContactRow, ThreadRow, MessageRow } from "../db";
 import { uid, now, inClause, ownedRow, accountForThread, threadsWithLabels, attachAvatars, toContact, safeJson } from "../db";
-import { loadThreadDetail, applyAction, type ActionBody } from "../routes/mail";
+import { loadThreadDetail, applyAction, type ActionBody, type MailOps } from "../routes/mail";
 import { applyScreenDecision } from "../routes/screener";
 import { sendMail } from "../send";
 import { htmlToText } from "../sanitize";
 import { addMemory, deleteMemory, listMemory, type MemoryKind } from "./memory";
+import { textToHtml } from "./chat";
 import type { Address, ThreadSummary } from "@shared/types";
 
 export interface ToolContext {
@@ -18,76 +20,165 @@ export interface ToolContext {
   autoSend: boolean;
   /** Streams a UI event (draft cards etc.). */
   emit: (event: { type: string; [k: string]: unknown }) => void;
+  waitUntil?: (p: Promise<unknown>) => void;
 }
 
-/** Minimal Hono-context shim so the route helpers (thread detail, actions) can be reused unchanged. */
-function shim(ctx: ToolContext, threadAccount?: AccountRow | null) {
-  const ids = ctx.accounts.map((a) => a.id);
-  const vars: Record<string, unknown> = { user: ctx.user, accountIds: ids, allAccountIds: ids, account: threadAccount ?? ctx.accounts[0] ?? null };
+function mailOps(ctx: ToolContext): MailOps {
   return {
     env: ctx.env,
-    get: (k: string) => vars[k],
-    req: { param: () => undefined, query: (k: string) => (k === "peek" ? "1" : undefined), json: async () => ({}) },
-    executionCtx: { waitUntil: (_p: Promise<unknown>) => {} },
-    json: (body: unknown, status?: number) => ({ body, status }),
-  } as any;
+    userId: ctx.user.id,
+    accountIds: ctx.accounts.map((a) => a.id),
+    waitUntil: ctx.waitUntil,
+  };
 }
 
 const BUCKETS = ["imbox", "feed", "paper_trail", "screener", "screened_out", "trash", "reply_later", "set_aside", "bubble_up", "sent", "everything", "previously_seen"] as const;
 const MAX_BODY = 6000;
 const MAX_MESSAGES = 20;
 
-function obj(properties: Record<string, unknown>, required: string[] = Object.keys(properties)) {
-  return { type: "object", properties, required, additionalProperties: false } as const;
+async function result(ctx: ToolContext, name: string, input: unknown) {
+  try {
+    return (await runTool(ctx, name, input)).result;
+  } catch (e) {
+    return JSON.stringify({ error: (e as Error).message });
+  }
 }
-const str = (description: string) => ({ type: "string", description });
-const nstr = (description: string) => ({ type: ["string", "null"], description });
-const nint = (description: string) => ({ type: ["integer", "null"], description });
 
-export const TOOLS: Anthropic.Tool[] = [
-  { name: "search_mail", description: "Full-text search across the user's mail (subjects, senders, bodies, notes). Returns thread summaries.", strict: true, input_schema: obj({ query: str("Search words"), limit: nint("Max results (default 10, max 25)") }) },
-  { name: "list_threads", description: "List threads in a box. Buckets: imbox (new + previously seen), feed, paper_trail, screener, screened_out, trash, reply_later, set_aside, bubble_up, sent, everything, previously_seen.", strict: true, input_schema: obj({ bucket: { type: "string", enum: [...BUCKETS] }, limit: nint("Max results (default 15, max 40)"), only_new: { type: ["boolean", "null"], description: "imbox only: return just the 'New for you' threads" } }) },
-  { name: "read_thread", description: "Read a thread: participants and messages with plain-text bodies (trimmed). Use before summarising or replying.", strict: true, input_schema: obj({ thread_id: str("Thread id"), max_messages: nint("Max messages to return, newest first (default 20)") }) },
-  { name: "list_screener", description: "Senders waiting in the Screener with what they sent.", strict: true, input_schema: obj({}) },
-  { name: "screen_sender", description: "Decide a Screener sender: let them into imbox / feed / paper_trail, or screen them out. Reversible later.", strict: true, input_schema: obj({ contact_id: str("Contact id from list_screener or find_contact"), decision: { type: "string", enum: ["imbox", "feed", "paper_trail", "screened_out"] } }) },
-  {
-    name: "thread_action",
-    description: "Organise a thread. actions: reply_later, set_aside (toggle on/off with `on`), bubble_up (needs `at` epoch ms; null cancels), move (needs `bucket`: imbox|feed|paper_trail|trash), mark_read, mark_unread, label_add / label_remove (needs `label_id`), bundle (toggle sender bundling with `on`), unsubscribe_info (returns the unsubscribe link for newsletters).",
-    strict: true,
-    input_schema: obj({
-      thread_id: str("Thread id"),
-      action: { type: "string", enum: ["reply_later", "set_aside", "bubble_up", "move", "mark_read", "mark_unread", "label_add", "label_remove", "bundle", "unsubscribe_info"] },
-      on: { type: ["boolean", "null"], description: "For reply_later / set_aside / bundle (default true)" },
-      bucket: { type: ["string", "null"], enum: ["imbox", "feed", "paper_trail", "trash", null], description: "For move" },
-      at: nint("For bubble_up: epoch milliseconds when it should come back"),
-      label_id: nstr("For label_add / label_remove"),
+/** AI SDK tools for Think (`getTools`) and MCP. */
+export function assistantTools(ctx: ToolContext): ToolSet {
+  return {
+    search_mail: tool({
+      description: "Full-text search across the user's mail (subjects, senders, bodies, notes). Returns thread summaries.",
+      inputSchema: z.object({
+        query: z.string().describe("Search words"),
+        limit: z.number().int().nullable().optional().describe("Max results (default 10, max 25)"),
+      }),
+      execute: async (input) => result(ctx, "search_mail", input),
     }),
-  },
-  { name: "list_labels", description: "The user's labels (id, name).", strict: true, input_schema: obj({}) },
-  { name: "list_collections", description: "The user's collections (id, name, thread count).", strict: true, input_schema: obj({}) },
-  { name: "create_collection", description: "Create a collection (a named bundle of related threads).", strict: true, input_schema: obj({ name: str("Collection name"), description: nstr("Optional one-line description") }) },
-  { name: "add_to_collection", description: "Add a thread to a collection.", strict: true, input_schema: obj({ thread_id: str("Thread id"), collection_id: str("Collection id") }) },
-  { name: "save_clip", description: "Save a short piece of text from a thread (a code, address, sentence) to the user's Clips.", strict: true, input_schema: obj({ thread_id: str("Thread id"), text: str("The exact text to clip (max 500 chars)") }) },
-  { name: "find_contact", description: "Find people by name or email among the user's contacts and address book.", strict: true, input_schema: obj({ query: str("Name or email fragment"), limit: nint("Max results (default 8)") }) },
-  {
-    name: "create_draft",
-    description: "Write an email as a draft for the user to review. mode: new (needs `to` + `subject`), reply (to the thread's last sender), reply_all, forward (needs `to`). Body is plain text; paragraphs separated by blank lines. The user decides whether to send. Returns a draft id.",
-    strict: true,
-    input_schema: obj({
-      mode: { type: "string", enum: ["new", "reply", "reply_all", "forward"] },
-      thread_id: nstr("Thread id for reply / reply_all / forward"),
-      to: { type: ["array", "null"], items: { type: "string" }, description: "Recipient emails (new / forward). Null for replies." },
-      cc: { type: ["array", "null"], items: { type: "string" }, description: "CC emails" },
-      subject: nstr("Subject (new mail; replies/forwards derive it when null)"),
-      body_text: str("The email text, in the user's voice"),
-      account_id: nstr("From account id (null = the thread's account or the default account)"),
+    list_threads: tool({
+      description: "List threads in a box. Buckets: imbox (new + previously seen), feed, paper_trail, screener, screened_out, trash, reply_later, set_aside, bubble_up, sent, everything, previously_seen.",
+      inputSchema: z.object({
+        bucket: z.enum(BUCKETS),
+        limit: z.number().int().nullable().optional().describe("Max results (default 15, max 40)"),
+        only_new: z.boolean().nullable().optional().describe("imbox only: return just the 'New for you' threads"),
+      }),
+      execute: async (input) => result(ctx, "list_threads", input),
     }),
-  },
-  { name: "send_draft", description: "Send a draft. Only works when the user allowed autonomous sending; otherwise the user must press Send themselves.", strict: true, input_schema: obj({ draft_id: str("Draft id from create_draft") }) },
-  { name: "list_memory", description: "What you currently remember about the user (ids included).", strict: true, input_schema: obj({}) },
-  { name: "remember", description: "Store a durable fact, preference, tone note, or contact note about the user. Keep it to one concise sentence.", strict: true, input_schema: obj({ kind: { type: "string", enum: ["profile", "tone", "fact", "preference", "contact"] }, content: str("One sentence") }) },
-  { name: "forget", description: "Delete a memory entry by id.", strict: true, input_schema: obj({ id: str("Memory id") }) },
-];
+    read_thread: tool({
+      description: "Read a thread: participants and messages with plain-text bodies (trimmed). Use before summarising or replying.",
+      inputSchema: z.object({
+        thread_id: z.string().describe("Thread id"),
+        max_messages: z.number().int().nullable().optional().describe("Max messages to return, newest first (default 20)"),
+      }),
+      execute: async (input) => result(ctx, "read_thread", input),
+    }),
+    list_screener: tool({
+      description: "Senders waiting in the Screener with what they sent.",
+      inputSchema: z.object({}),
+      execute: async (input) => result(ctx, "list_screener", input),
+    }),
+    screen_sender: tool({
+      description: "Decide a Screener sender: let them into imbox / feed / paper_trail, or screen them out. Reversible later.",
+      inputSchema: z.object({
+        contact_id: z.string().describe("Contact id from list_screener or find_contact"),
+        decision: z.enum(["imbox", "feed", "paper_trail", "screened_out"]),
+      }),
+      execute: async (input) => result(ctx, "screen_sender", input),
+    }),
+    thread_action: tool({
+      description:
+        "Organise a thread. actions: reply_later, set_aside (toggle on/off with `on`), bubble_up (needs `at` epoch ms; null cancels), move (needs `bucket`: imbox|feed|paper_trail|trash), mark_read, mark_unread, label_add / label_remove (needs `label_id`), bundle (toggle sender bundling with `on`), unsubscribe_info (returns the unsubscribe link for newsletters).",
+      inputSchema: z.object({
+        thread_id: z.string().describe("Thread id"),
+        action: z.enum(["reply_later", "set_aside", "bubble_up", "move", "mark_read", "mark_unread", "label_add", "label_remove", "bundle", "unsubscribe_info"]),
+        on: z.boolean().nullable().optional().describe("For reply_later / set_aside / bundle (default true)"),
+        bucket: z.enum(["imbox", "feed", "paper_trail", "trash"]).nullable().optional().describe("For move"),
+        at: z.number().int().nullable().optional().describe("For bubble_up: epoch milliseconds when it should come back"),
+        label_id: z.string().nullable().optional().describe("For label_add / label_remove"),
+      }),
+      execute: async (input) => result(ctx, "thread_action", input),
+    }),
+    list_labels: tool({
+      description: "The user's labels (id, name).",
+      inputSchema: z.object({}),
+      execute: async (input) => result(ctx, "list_labels", input),
+    }),
+    list_collections: tool({
+      description: "The user's collections (id, name, thread count).",
+      inputSchema: z.object({}),
+      execute: async (input) => result(ctx, "list_collections", input),
+    }),
+    create_collection: tool({
+      description: "Create a collection (a named bundle of related threads).",
+      inputSchema: z.object({
+        name: z.string().describe("Collection name"),
+        description: z.string().nullable().optional().describe("Optional one-line description"),
+      }),
+      execute: async (input) => result(ctx, "create_collection", input),
+    }),
+    add_to_collection: tool({
+      description: "Add a thread to a collection.",
+      inputSchema: z.object({
+        thread_id: z.string().describe("Thread id"),
+        collection_id: z.string().describe("Collection id"),
+      }),
+      execute: async (input) => result(ctx, "add_to_collection", input),
+    }),
+    save_clip: tool({
+      description: "Save a short piece of text from a thread (a code, address, sentence) to the user's Clips.",
+      inputSchema: z.object({
+        thread_id: z.string().describe("Thread id"),
+        text: z.string().describe("The exact text to clip (max 500 chars)"),
+      }),
+      execute: async (input) => result(ctx, "save_clip", input),
+    }),
+    find_contact: tool({
+      description: "Find people by name or email among the user's contacts and address book.",
+      inputSchema: z.object({
+        query: z.string().describe("Name or email fragment"),
+        limit: z.number().int().nullable().optional().describe("Max results (default 8)"),
+      }),
+      execute: async (input) => result(ctx, "find_contact", input),
+    }),
+    create_draft: tool({
+      description:
+        "Write an email as a draft for the user to review. mode: new (needs `to` + `subject`), reply (to the thread's last sender), reply_all, forward (needs `to`). Body is plain text; paragraphs separated by blank lines. The user decides whether to send. Returns a draft id.",
+      inputSchema: z.object({
+        mode: z.enum(["new", "reply", "reply_all", "forward"]),
+        thread_id: z.string().nullable().optional().describe("Thread id for reply / reply_all / forward"),
+        to: z.array(z.string()).nullable().optional().describe("Recipient emails (new / forward). Null for replies."),
+        cc: z.array(z.string()).nullable().optional().describe("CC emails"),
+        subject: z.string().nullable().optional().describe("Subject (new mail; replies/forwards derive it when null)"),
+        body_text: z.string().describe("The email text, in the user's voice"),
+        account_id: z.string().nullable().optional().describe("From account id (null = the thread's account or the default account)"),
+      }),
+      execute: async (input) => result(ctx, "create_draft", input),
+    }),
+    send_draft: tool({
+      description: "Send a draft. Only works when the user allowed autonomous sending; otherwise the user must press Send themselves.",
+      inputSchema: z.object({ draft_id: z.string().describe("Draft id from create_draft") }),
+      execute: async (input) => result(ctx, "send_draft", input),
+    }),
+    list_memory: tool({
+      description: "What you currently remember about the user (ids included).",
+      inputSchema: z.object({}),
+      execute: async (input) => result(ctx, "list_memory", input),
+    }),
+    remember: tool({
+      description: "Store a durable fact, preference, tone note, or contact note about the user. Keep it to one concise sentence.",
+      inputSchema: z.object({
+        kind: z.enum(["profile", "tone", "fact", "preference", "contact"]),
+        content: z.string().describe("One sentence"),
+      }),
+      execute: async (input) => result(ctx, "remember", input),
+    }),
+    forget: tool({
+      description: "Delete a memory entry by id.",
+      inputSchema: z.object({ id: z.string().describe("Memory id") }),
+      execute: async (input) => result(ctx, "forget", input),
+    }),
+  };
+}
 
 /* ---------- helpers ---------- */
 
@@ -116,15 +207,6 @@ async function ownedThreadRow(ctx: ToolContext, id: string): Promise<ThreadRow |
 
 function accountById(ctx: ToolContext, id: string): AccountRow | undefined {
   return ctx.accounts.find((a) => a.id === id);
-}
-
-function textToHtml(text: string): string {
-  const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  return text
-    .trim()
-    .split(/\n{2,}/)
-    .map((p) => `<p>${esc(p).replace(/\n/g, "<br>")}</p>`)
-    .join("");
 }
 
 function parseUnsubscribe(header: string): { url?: string; mailto?: string } {
@@ -216,7 +298,7 @@ export async function runTool(ctx: ToolContext, name: string, rawInput: unknown)
       const id = String(input.thread_id ?? "");
       const acc = await accountForThread(db, ctx.user.id, id);
       if (!acc) return fail("Thread not found");
-      const detail = await loadThreadDetail(shim(ctx, acc), id);
+      const detail = await loadThreadDetail(db, ctx.user.id, id);
       if (!detail) return fail("Thread not found");
       const max = Math.min(MAX_MESSAGES, Math.max(1, Number(input.max_messages) || MAX_MESSAGES));
       const all = detail.messages;
@@ -292,7 +374,7 @@ export async function runTool(ctx: ToolContext, name: string, rawInput: unknown)
         case "bundle": body = { action: "bundle", on } as any; label = on ? "Sender bundled" : "Sender unbundled"; break;
         default: return fail("Unknown action");
       }
-      const r = await applyAction(shim(ctx, acc), id, body);
+      const r = await applyAction(mailOps(ctx), id, body);
       if ("error" in r) return fail(r.error);
       return ok({ ok: true, thread_id: id, action }, `${label} · “${row.custom_subject || row.subject}”`);
     }

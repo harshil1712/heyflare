@@ -165,60 +165,11 @@ export async function connectGmailLink() {
   return api.post<{ url: string }>("/api/accounts/connect-link", {});
 }
 
-/** Stream assistant chat SSE. Calls onEvent for each parsed JSON event. */
+/** Native Expo assistant used SSE; chat now runs via Think on the PWA. */
 export async function streamAssistantChat(
-  body: { conversation_id?: string | null; message: string },
-  onEvent: (ev: { type: string; [k: string]: unknown }) => void,
-  signal?: AbortSignal
+  _body: { conversation_id?: string | null; message: string },
+  _onEvent: (ev: { type: string; [k: string]: unknown }) => void,
+  _signal?: AbortSignal
 ): Promise<void> {
-  const base = await getServerUrl();
-  if (!base) throw new ApiError(0, "Configure your server URL first.");
-  const token = await getSessionToken();
-  const scope = await getScope();
-  const res = await fetch(`${base}/api/ai/chat`, {
-    method: "POST",
-    headers: {
-      Accept: "text/event-stream",
-      "Content-Type": "application/json",
-      "X-Heyflare-Client": "mobile",
-      "X-Account-Id": scope || "all",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    body: JSON.stringify(body),
-    signal,
-  });
-  if (res.status === 401) {
-    await clearSessionToken();
-    throw new ApiError(401, "Please log in");
-  }
-  if (!res.ok || !res.body) {
-    let msg = res.statusText;
-    try {
-      const j = (await res.json()) as { error?: string };
-      msg = j.error || msg;
-    } catch {
-      /* ignore */
-    }
-    throw new ApiError(res.status, msg || "Chat failed");
-  }
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buf = "";
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += decoder.decode(value, { stream: true });
-    let idx: number;
-    while ((idx = buf.indexOf("\n\n")) >= 0) {
-      const chunk = buf.slice(0, idx);
-      buf = buf.slice(idx + 2);
-      const line = chunk.split("\n").find((l) => l.startsWith("data: "));
-      if (!line) continue;
-      try {
-        onEvent(JSON.parse(line.slice(6)) as { type: string });
-      } catch {
-        /* ignore partial */
-      }
-    }
-  }
+  throw new ApiError(410, "Assistant chat moved to the web app (Think agent). Use the PWA for chat.");
 }

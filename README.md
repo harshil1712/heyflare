@@ -263,19 +263,19 @@ TOTP (Google Authenticator, 1Password, Authy…) with 10 single-use recovery cod
 ## License
 MIT © Doable Team
 
-## AI assistant (bring your own key)
+## AI assistant
 heyflare has an in-product assistant (sidebar → Assistant, ⌘J) that can search and read your mail, screen senders, organise
 threads (Reply Later, Set Aside, Bubble Up, move, labels, collections, clips, bundles), look up contacts, and write drafts in
 your voice. It follows HEY's principle: **the agent writes, you decide** — drafts are never sent unless you press Send (or
 explicitly allow autonomous sending in Settings → AI). Thread pages get **Reply with AI** (one-line brief → a full reply drafted
 into the composer, using your tone) and **Summarise with AI**.
 
-**Providers** (Settings → AI): Anthropic (official SDK, default), OpenAI, xAI (Grok), OpenRouter, Google Gemini, or any
-OpenAI-compatible server (Ollama, LM Studio, Groq, Mistral…). Keys are stored encrypted with `SESSION_SECRET` and never shown
-again. The model is free text with suggestions per provider.
+**Default provider**: Cloudflare **Workers AI** via the `AI` binding and [`workers-ai-provider`](https://www.npmjs.com/package/workers-ai-provider)
+(`createWorkersAI({ binding: env.AI })`), default model `@cf/zai-org/glm-5.3`. No API key required when the binding is present.
+Optional BYOK presets (Anthropic, OpenAI, xAI, OpenRouter, Gemini, custom OpenAI-compatible) remain under Settings → AI.
 
 **Memory**: the assistant keeps a small, editable memory of who you are, how you write (greetings, sign-offs, length), your
 preferences, and notes on people. It learns from the mail you send (at most twice a day, can be turned off), from what it does
 for you, and from notes you add. Everything is visible and editable in Settings → AI → Memory, and can be wiped.
 
-**Privacy**: mail is only sent to the provider when you use an AI feature (chat, reply, summarise, or background learning).
+**Privacy**: mail is only sent to the model when you use an AI feature (chat, reply, summarise, or background learning).

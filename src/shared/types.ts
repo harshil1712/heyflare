@@ -273,9 +273,9 @@ export interface TwoFactorStatus {
 
 /* ---------- AI assistant ---------- */
 export interface AiPreset {
-  id: "anthropic" | "openai" | "xai" | "openrouter" | "gemini" | "custom";
+  id: "workers_ai" | "anthropic" | "openai" | "xai" | "openrouter" | "gemini" | "custom";
   label: string;
-  kind: "anthropic" | "openai_compatible";
+  kind: "workers_ai" | "anthropic" | "openai_compatible";
   base_url: string;
   default_model: string;
   models: string[];
@@ -284,7 +284,7 @@ export interface AiPreset {
 }
 export interface AiSettings {
   configured: boolean;
-  provider: "anthropic" | "openai_compatible";
+  provider: "workers_ai" | "anthropic" | "openai_compatible";
   preset: AiPreset["id"];
   base_url: string;
   key_hint: string;
@@ -294,6 +294,8 @@ export interface AiSettings {
   presets: AiPreset[];
   last_learned_at: number | null;
   server_ready: boolean;
+  /** True when the Worker has an `AI` binding. */
+  workers_ai?: boolean;
 }
 export type AiMemoryKind = "profile" | "tone" | "fact" | "preference" | "contact";
 export interface AiMemoryEntry {
