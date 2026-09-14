@@ -50,6 +50,8 @@ export default function MobileMore() {
   const qc = useQueryClient();
   const logout = async () => {
     await api.post("/auth/logout");
+    const { clearAppBadge } = await import("../lib/push");
+    void clearAppBadge();
     qc.clear();
     nav("/login");
   };

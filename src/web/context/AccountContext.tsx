@@ -1,9 +1,10 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { Account, User } from "@shared/types";
-import { getAccountId, storeAccountId, useMe } from "../api";
+import { getAccountId, storeAccountId, useMe, useCounts } from "../api";
 import { api } from "../api";
 import { setConnectRefresh } from "../lib/connect";
+import { clearAppBadge, syncAppBadge } from "../lib/push";
 
 export const ALL = "all" as const;
 export type Scope = typeof ALL | string;
@@ -122,6 +123,18 @@ export function AccountProvider({ children }: { children: ReactNode }) {
     mql.addEventListener("change", fn);
     return () => mql.removeEventListener("change", fn);
   }, [theme]);
+
+  // Home-screen / dock badge from unread Imbox + Screener (PWA Badging API; Mac uses native separately).
+  const counts = useCounts(!!me.data?.user);
+  useEffect(() => {
+    if (!me.data?.user) {
+      void clearAppBadge();
+      return;
+    }
+    const c = counts.data;
+    if (!c) return;
+    void syncAppBadge((c.imbox_new ?? 0) + (c.screener ?? 0));
+  }, [me.data?.user, counts.data?.imbox_new, counts.data?.screener]);
 
   const setScope = useCallback(
     (s: Scope) => {

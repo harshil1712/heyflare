@@ -258,6 +258,8 @@ function AppSidebar() {
   }, [c?.imbox_new, c?.screener]);
   const logout = async () => {
     await api.post("/auth/logout");
+    const { clearAppBadge } = await import("../lib/push");
+    void clearAppBadge();
     qc.clear();
     nav("/login");
   };

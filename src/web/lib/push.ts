@@ -112,3 +112,22 @@ export async function disableWebPush(): Promise<void> {
 
 /** Exported for tests / debugging. */
 export { toB64Url, urlBase64ToUint8Array };
+
+/** Home-screen icon badge (iOS 16.4+ / Chromium). No-op when unsupported. */
+export async function syncAppBadge(count: number): Promise<void> {
+  const n = Math.max(0, Math.floor(count));
+  try {
+    if (n > 0 && "setAppBadge" in navigator) await navigator.setAppBadge(n);
+    else if (n <= 0 && "clearAppBadge" in navigator) await navigator.clearAppBadge();
+  } catch {
+    /* ignore */
+  }
+}
+
+export async function clearAppBadge(): Promise<void> {
+  try {
+    if ("clearAppBadge" in navigator) await navigator.clearAppBadge();
+  } catch {
+    /* ignore */
+  }
+}

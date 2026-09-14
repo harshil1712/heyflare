@@ -70,6 +70,8 @@ export default function MobileSettings() {
   const setTheme = (t: "light" | "dark" | "system") => update.mutate({ settings: { ...(user?.settings ?? {}), theme: t } });
   const logout = async () => {
     await api.post("/auth/logout");
+    const { clearAppBadge } = await import("../lib/push");
+    void clearAppBadge();
     qc.clear();
     nav("/login");
   };

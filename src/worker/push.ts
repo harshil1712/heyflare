@@ -79,7 +79,13 @@ export async function filterNotifyCooldown(env: Env, userId: string, threadIds: 
   return out;
 }
 
-export type WebPushMessage = { title: string; body: string; data?: Record<string, string> };
+export type WebPushMessage = {
+  title: string;
+  body: string;
+  data?: Record<string, string>;
+  /** Home-screen icon badge count (iOS/Android PWA Badging API). */
+  badge?: number;
+};
 
 /**
  * Encrypted Web Push (RFC 8291 aes128gcm + VAPID). Works with Chrome, Firefox, Android, and iOS Home Screen PWAs.
@@ -100,6 +106,7 @@ export async function sendPush(
         data: {
           title: message.title,
           body: message.body,
+          badge: message.badge ?? 0,
           data: message.data ?? { url: "/" },
         },
         options: { ttl: 60, urgency: "high" },
@@ -238,6 +245,34 @@ export async function sendExpoPush(
 }
 
 /**
+ * Unseen Imbox + Screener counts for the home-screen badge (matches Mac dock badge).
+ * Scoped to every account the user owns.
+ */
+export async function appBadgeCount(db: D1Database, userId: string): Promise<number> {
+  const t = now();
+  const visible = `t.merged_into IS NULL AND (t.bubble_up_at IS NULL OR t.bubble_up_at <= ?)`;
+  const row = await db
+    .prepare(
+      `SELECT
+         (SELECT COUNT(*) FROM threads t JOIN accounts a ON a.id = t.account_id
+           WHERE a.user_id = ? AND t.bucket = 'imbox' AND t.bundle_id IS NULL AND t.seen = 0
+             AND t.reply_later = 0 AND t.set_aside = 0 AND ${visible})
+       + (SELECT COUNT(*) FROM bundles b
+           WHERE b.status = 'open' AND EXISTS (
+             SELECT 1 FROM threads t JOIN accounts a ON a.id = t.account_id
+             WHERE t.bundle_id = b.id AND a.user_id = ? AND t.bucket = 'imbox'
+               AND t.reply_later = 0 AND t.set_aside = 0 AND ${visible}
+           ))
+       + (SELECT COUNT(DISTINCT t.account_id || '|' || t.last_from_email) FROM threads t JOIN accounts a ON a.id = t.account_id
+           WHERE a.user_id = ? AND t.bucket = 'screener' AND ${visible})
+       AS n`
+    )
+    .bind(userId, t, userId, t, userId, t)
+    .first<{ n: number }>();
+  return Math.max(0, row?.n ?? 0);
+}
+
+/**
  * After ingest: notify the account owner about newly arrived Imbox / Reply Later threads.
  * Dedupes per thread + cooldown; drops gone Web Push subscriptions and invalid Expo tokens.
  */
@@ -256,7 +291,13 @@ export async function notifyNewMail(
   const primary = due[0];
   const title = due.length === 1 ? "New mail" : `${due.length} new messages`;
   const body = due.length === 1 ? "Something new in your Imbox." : "Open heyflare to catch up.";
-  const pushMessage: WebPushMessage = { title, body, data: { url: `/t/${primary}` } };
+  const badge = await appBadgeCount(env.DB, userId).catch(() => due.length);
+  const pushMessage: WebPushMessage = {
+    title,
+    body,
+    badge,
+    data: { url: `/t/${primary}`, badge: String(badge) },
+  };
 
   let attempted = 0;
   for (const sub of subs) {
@@ -273,7 +314,7 @@ export async function notifyNewMail(
       title,
       body,
       data: { url: `/t/${primary}` },
-      badge: due.length,
+      badge,
     });
     attempted += r.ok;
   }

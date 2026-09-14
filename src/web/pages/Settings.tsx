@@ -628,9 +628,9 @@ function NotificationsSection({ compact }: { compact?: boolean }) {
       case "denied":
         return "Notifications are blocked for this site. Allow them in browser settings, then try again.";
       case "on":
-        return "You'll get a ping for new Imbox mail (not Screener). Same rules as before.";
+        return "Notifications for new Imbox mail. Home-screen badge tracks unseen Imbox + Screener.";
       case "off":
-        return "New Imbox mail can wake this device. Screener still stays quiet until you let someone in.";
+        return "Enable to get Imbox notifications and a home-screen badge (Imbox + Screener counts).";
       default:
         return "";
     }
