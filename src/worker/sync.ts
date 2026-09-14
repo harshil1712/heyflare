@@ -490,7 +490,7 @@ export async function ingestParsed(env: Env, account: AccountRow, parsed: Parsed
     }
   }
 
-  // Web Push: wake the owner's devices for new Imbox / Reply Later threads (best-effort).
+  // Web Push: wake the owner's devices for new Imbox / Reply Later / Screener threads (best-effort).
   if (added && touchedThreads.size) {
     try {
       const { notifyNewMail } = await import("./push");

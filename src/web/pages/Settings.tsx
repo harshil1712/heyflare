@@ -628,9 +628,9 @@ function NotificationsSection({ compact }: { compact?: boolean }) {
       case "denied":
         return "Notifications are blocked for this site. Allow them in browser settings, then try again.";
       case "on":
-        return "Notifications for new Imbox mail. Home-screen badge tracks unseen Imbox + Screener.";
+        return "Alerts for new Imbox mail and Screener senders. Home-screen badge is Imbox + Screener.";
       case "off":
-        return "Enable to get Imbox notifications and a home-screen badge (Imbox + Screener counts).";
+        return "Enable for Imbox + Screener notifications and a home-screen badge of both counts.";
       default:
         return "";
     }
@@ -656,7 +656,7 @@ function NotificationsSection({ compact }: { compact?: boolean }) {
 
   return (
     <Section title="Notifications">
-      <Row label="New Imbox mail" hint={hint}>
+      <Row label="New mail & Screener" hint={hint}>
         {state === "loading" ? (
           <Skeleton className={cn("h-5 w-9 rounded-full", compact && "h-6 w-11")} />
         ) : canToggle ? (

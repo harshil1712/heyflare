@@ -1,4 +1,4 @@
-// Web Push: subscription CRUD, Imbox gating, VAPID-authenticated empty pushes (SW shows the title).
+// Web Push: subscription CRUD, Imbox/Screener gating, VAPID-authenticated pushes (SW shows the title).
 import type { Env } from "./env";
 import type { ThreadRow } from "./db";
 import { uid, now } from "./db";
@@ -16,11 +16,77 @@ export interface PushSubRow {
   last_seen_at: number;
 }
 
-/** Threads that should wake the user's phone: new Imbox (or Reply Later tray). */
+type NotifyThread = Pick<ThreadRow, "id" | "bucket" | "seen" | "reply_later" | "is_sent_only" | "last_from_email" | "last_from_name">;
+
+/** Threads that should wake the user's phone: Imbox, Reply Later, or Screener. */
 export function threadsToNotify(threads: Pick<ThreadRow, "id" | "bucket" | "seen" | "reply_later" | "is_sent_only">[]): string[] {
   return threads
-    .filter((t) => !t.is_sent_only && (t.bucket === "imbox" || t.reply_later === 1) && t.seen === 0)
+    .filter(
+      (t) =>
+        !t.is_sent_only &&
+        t.seen === 0 &&
+        (t.bucket === "imbox" || t.bucket === "screener" || t.reply_later === 1)
+    )
     .map((t) => t.id);
+}
+
+function senderLabel(t: Pick<ThreadRow, "last_from_email" | "last_from_name">): string {
+  const name = (t.last_from_name || "").trim();
+  const email = (t.last_from_email || "").trim();
+  return name || email || "Someone";
+}
+
+/** Title / body / deep-link for a batch of due threads (Imbox, Reply Later, Screener). */
+export function pushCopyForThreads(dueThreads: NotifyThread[]): {
+  title: string;
+  body: string;
+  url: string;
+} {
+  const imboxish = dueThreads.filter((t) => t.bucket === "imbox" || t.reply_later === 1);
+  const screener = dueThreads.filter((t) => t.bucket === "screener");
+  const screenerByEmail = new Map<string, NotifyThread>();
+  for (const t of screener) {
+    const key = t.last_from_email.toLowerCase();
+    if (!screenerByEmail.has(key)) screenerByEmail.set(key, t);
+  }
+  const screenerSenders = [...screenerByEmail.values()];
+
+  if (imboxish.length && !screenerSenders.length) {
+    return {
+      title: imboxish.length === 1 ? "New mail" : `${imboxish.length} new messages`,
+      body: imboxish.length === 1 ? "Something new in your Imbox." : "Open heyflare to catch up.",
+      url: `/t/${imboxish[0].id}`,
+    };
+  }
+
+  if (screenerSenders.length && !imboxish.length) {
+    if (screenerSenders.length === 1) {
+      const who = senderLabel(screenerSenders[0]);
+      return {
+        title: "New sender",
+        body: `${who} is waiting in the Screener.`,
+        url: "/screener",
+      };
+    }
+    return {
+      title: `${screenerSenders.length} new senders`,
+      body: "Open heyflare to decide who gets in.",
+      url: "/screener",
+    };
+  }
+
+  // Mixed Imbox + Screener in one sync batch.
+  const primary = imboxish[0] ?? screener[0];
+  const parts: string[] = [];
+  if (imboxish.length) parts.push(imboxish.length === 1 ? "1 in Imbox" : `${imboxish.length} in Imbox`);
+  if (screenerSenders.length) {
+    parts.push(screenerSenders.length === 1 ? "1 in Screener" : `${screenerSenders.length} in Screener`);
+  }
+  return {
+    title: "New mail",
+    body: parts.join(", ") + ".",
+    url: primary.bucket === "screener" ? "/screener" : `/t/${primary.id}`,
+  };
 }
 
 export async function upsertPushSubscription(
@@ -156,13 +222,13 @@ export async function appBadgeCount(db: D1Database, userId: string): Promise<num
 }
 
 /**
- * After ingest: notify the account owner about newly arrived Imbox / Reply Later threads.
+ * After ingest: notify the account owner about newly arrived Imbox / Reply Later / Screener threads.
  * Dedupes per thread + cooldown; drops gone Web Push subscriptions.
  */
 export async function notifyNewMail(
   env: Env,
   userId: string,
-  threads: Pick<ThreadRow, "id" | "bucket" | "seen" | "reply_later" | "is_sent_only">[]
+  threads: NotifyThread[]
 ): Promise<{ attempted: number; notified_threads: number; skipped: number }> {
   const candidates = threadsToNotify(threads);
   const due = await filterNotifyCooldown(env, userId, candidates);
@@ -171,15 +237,15 @@ export async function notifyNewMail(
   const subs = await listPushSubscriptions(env, userId);
   if (!subs.length) return { attempted: 0, notified_threads: 0, skipped: due.length };
 
-  const primary = due[0];
-  const title = due.length === 1 ? "New mail" : `${due.length} new messages`;
-  const body = due.length === 1 ? "Something new in your Imbox." : "Open heyflare to catch up.";
+  const dueSet = new Set(due);
+  const dueThreads = threads.filter((t) => dueSet.has(t.id));
+  const { title, body, url } = pushCopyForThreads(dueThreads);
   const badge = await appBadgeCount(env.DB, userId).catch(() => due.length);
   const pushMessage: WebPushMessage = {
     title,
     body,
     badge,
-    data: { url: `/t/${primary}`, badge: String(badge) },
+    data: { url, badge: String(badge) },
   };
 
   let attempted = 0;

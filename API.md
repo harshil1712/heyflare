@@ -159,7 +159,7 @@ Without `CF_API_TOKEN`, domain setup is "manual": the API returns the exact step
   nothing is marked seen just by scrolling the page.
 
 ## Push
-- Web Push (PWA): `GET /api/push/vapid-public-key`, `GET/POST/DELETE /api/push/subscriptions` (VAPID endpoint + keys). Client registers `/sw.js` and toggles from Settings → Preferences. Payload is aes128gcm (works with iOS Home Screen PWAs). New Imbox / Reply Later mail triggers Web Push (cooldown via `push_notify_log`).
+- Web Push (PWA): `GET /api/push/vapid-public-key`, `GET/POST/DELETE /api/push/subscriptions` (VAPID endpoint + keys). Client registers `/sw.js` and toggles from Settings → Preferences. Payload is aes128gcm (works with iOS Home Screen PWAs). New Imbox / Reply Later / Screener mail triggers Web Push (cooldown via `push_notify_log`); badge count is unseen Imbox + Screener.
 
 ## Calendar
 Mounted at `/api/calendar` behind `requireUser` and, unlike mail, **not** account-scoped — the calendar belongs to the

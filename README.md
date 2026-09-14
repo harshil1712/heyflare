@@ -200,7 +200,7 @@ Connect clients to `https://YOUR_HOST/mcp` with `Authorization: Bearer hf_…`. 
 
 Optional. Generate keys with `node scripts/gen-vapid.mjs`, then set Worker secrets `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, and optionally `VAPID_SUBJECT` (e.g. `mailto:you@example.com`).
 
-The web app registers `/sw.js`, exposes an installable `manifest.webmanifest`, and lets you enable notifications under **Settings → Preferences**. New **Imbox** mail notifies subscribed browsers (Screener stays quiet until you let the sender in).
+The web app registers `/sw.js`, exposes an installable `manifest.webmanifest`, and lets you enable notifications under **Settings → Preferences**. New **Imbox** mail and new **Screener** senders notify subscribed browsers; the home-screen badge is unseen Imbox + Screener.
 
 Works on desktop, Android, and **iOS Home Screen PWAs** (Share → Add to Home Screen, then open from the icon). In-Safari tabs on iPhone cannot subscribe — the Preferences toggle explains that.
 
