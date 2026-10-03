@@ -172,6 +172,8 @@ Inbound mail can be simulated against the local worker: `POST http://localhost:8
 
 Money-path tests run inside the Workers runtime via `@cloudflare/vitest-plugin` (real D1 + migrations):
 
+Tests disable remote bindings and opt into explicit Workers AI mocks; they need no Cloudflare credentials and do not run paid inference.
+
 ```sh
 npm test          # vitest run
 npm run check     # TypeScript (app + worker)
@@ -208,6 +210,18 @@ Works on desktop, Android, and **iOS Home Screen PWAs** (Share → Add to Home S
 
 Domain mailboxes have no Gmail spam layer. With the `AI` binding (see `wrangler.jsonc`), inbound mail is classified by **Gemma 4** (`@cf/google/gemma-4-26b-a4b-it`). Clear spam is auto-moved to Screened out; `ham` / `unsure` still go through the Screener. Toggle under Settings → Mail (`aiSpamScreen`, default on). Requires Workers AI usage on your account.
 
+#### Clef shadow trial
+
+After successful delivery, **Clef** (`@cf/cloudflare/clef`) also scores each new custom-domain message in the email handler's `waitUntil` background task. It never changes contacts, threads, delivery, or Gemma's existing request/parsing behavior. This includes already-screened senders, for which the recorded Gemma verdict is `skipped`; Gmail, duplicate deliveries, and mail with AI screening disabled are excluded.
+
+The trial runs automatically when Workers AI and AI spam screening are enabled. It adds **one billable Clef request per new domain email**, with no retries and an eight-second deadline/abort signal. Turn off only shadow collection with `PATCH /api/me` and `{"settings":{"aiSpamShadow":false}}`; turning off `aiSpamScreen` disables both models. Re-enable shadow collection with `aiSpamShadow: true`. There is no separate shadow toggle in the UI yet.
+
+Clef receives bounded From/Subject/Precedence fields, List-Unsubscribe presence, and up to 500 characters of plain-text content. This sends additional mail (including known senders) to Cloudflare Workers AI, not to a third-party BYOK provider. D1 stores only the internal message reference, model/prompt version, actual Gemma verdict, Clef score/status, timestamp, and latency—no duplicate bodies, subjects, sender addresses, raw responses, or exception text. Failures are recorded as `error`, `invalid_response`, or `timeout`; interrupted tasks can remain `pending`. Recording failures never reject mail and emit only a generic warning.
+
+Authenticated `GET /api/me/spam-shadow` returns a private rolling 30-day summary and the latest 50 observations across the owner's accounts. Summary groups retain all attempts, including errors/pending work, and count Clef's hypothetical flags at **0.95**, an exploratory threshold—not a delivery rule. `ham`/`spam` Gemma rows allow comparisons; `unsure` includes current Gemma failures, and `skipped` is not a model prediction. No false-positive rate, recall, or accuracy is claimed: neither Gemma nor a sender's current screen status is ground truth. Review both disagreements and a random sample of agreements before considering a production switch.
+
+The cron removes expired observations in batches of 500; deletion of the source message/account also cascades to its observations. Disabling collection does not erase the existing 30-day history. Reports are never sent to the public benchmark project. Migration `0023_spam_shadow.sql` applies automatically on first use, like existing migrations. No deployment or model switch happens merely by opening a PR; the shadow trial starts after deployment.
+
 ### Attachments (R2) and retention
 
 Domain-mail attachment blobs larger than **900 KB** are stored in the `ATTACHMENTS` R2 bucket (`wrangler.jsonc`); D1 keeps an `attachments.r2_key` pointer. Older large blobs still in D1 are **copied to R2 on first read**. Settings → Mail controls Paper Trail / Trash retention (days; `0` = keep forever); cron sweeps eligible threads.
@@ -241,4 +255,4 @@ Optional BYOK presets (Anthropic, OpenAI, xAI, OpenRouter, Gemini, custom OpenAI
 preferences, and notes on people. It learns from the mail you send (at most twice a day, can be turned off), from what it does
 for you, and from notes you add. Everything is visible and editable in Settings → AI → Memory, and can be wiped.
 
-**Privacy**: mail is only sent to the model when you use an AI feature (chat, reply, summarise, or background learning).
+**Privacy**: mail is sent to the configured provider for assistant features (chat, reply, summarise, or background learning). Separately, enabled custom-domain spam screening and the Clef shadow trial send bounded email content to Cloudflare Workers AI on arrival; see the controls above.

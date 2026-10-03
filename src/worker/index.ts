@@ -28,6 +28,7 @@ import tokensRoutes from "./routes/tokens";
 import pushRoutes from "./routes/push";
 import { handleMcpRequest } from "./mcp";
 import { routeAgentRequest } from "agents";
+import { pruneSpamShadow } from "./ai/spam-shadow";
 
 export { SyncActor } from "./sync-actor";
 export { AssistantAgent } from "./ai/assistant-agent";
@@ -97,6 +98,11 @@ app.all("*", async (c) => {
 async function runCron(env: Env) {
   const db = env.DB;
   try {
+    await pruneSpamShadow(db);
+  } catch {
+    console.warn("Spam shadow retention failed");
+  }
+  try {
     await processBubbleUps(db);
   } catch (e) {
     console.error("bubble up failed", e);
@@ -149,8 +155,8 @@ export default {
     ctx.waitUntil(ensureMigrations(env).then(() => runCron(env)));
   },
   // Cloudflare Email Routing → custom-domain mailboxes.
-  email: async (message: ForwardableEmailMessage, env: Env, _ctx: ExecutionContext) => {
+  email: async (message: ForwardableEmailMessage, env: Env, ctx: ExecutionContext) => {
     await ensureMigrations(env);
-    return handleInboundEmail(message, env);
+    return handleInboundEmail(message, env, ctx);
   },
 };

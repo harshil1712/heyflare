@@ -14,6 +14,8 @@ Account-scoped routes take the account via `X-Account-Id` header (web stores the
 ## Me / settings
 - `GET  /api/me` -> {user, accounts: Account[], registration_open}
 - `PATCH /api/me` {name?, settings?} -> {user}
+- `GET /api/me/spam-shadow` -> {enabled, model, since, threshold, threshold_is_exploratory: true, has_ground_truth: false, groups, recent}. Session-authenticated, owner-scoped across all accounts (not narrowed by `X-Account-Id`), `Cache-Control: no-store`. Rolling 30-day Clef shadow observations; `recent` contains at most 50 internal message/thread/account references and score metadata, never email content. Groups are by model/prompt version, actual Gemma verdict, and Clef status, with `attempts`, `clef_would_flag`, and `mean_latency_ms`. `pending`, `error`, `timeout`, and `invalid_response` remain visible and never count as hypothetical flags. No accuracy claims without independent message labels.
+- `PATCH /api/me` with `{"settings":{"aiSpamShadow":false}}` stops new shadow scoring; existing history expires after 30 days. Default on with Workers AI and `aiSpamScreen` enabled. `aiSpamScreen: false` disables both; shadow never changes delivery or sender screening. One extra billable Clef request per new domain message, including already-screened senders, after successful ingestion.
 - `POST /api/me/password` {current,next}
 - `GET  /api/accounts` -> Account[]
 - `PATCH /api/accounts/:id` {signature?, cover_art?, display_name?} -> Account

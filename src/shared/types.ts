@@ -28,6 +28,8 @@ export interface UserSettings {
    * Default on when unset. Gmail still uses Google's SPAM label instead.
    */
   aiSpamScreen?: boolean;
+  /** Record Clef shadow scores for domain mail without affecting delivery. Default on; aiSpamScreen: false also disables this. */
+  aiSpamShadow?: boolean;
 }
 
 export interface Account {

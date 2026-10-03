@@ -5,8 +5,19 @@ import { now, toAccount, toUser, safeJson } from "../db";
 import { hashPassword, verifyPassword } from "../auth";
 import { generateSecret, otpauthUrl, verifyTotp, generateRecoveryCodes, hashRecoveryCode, matchRecoveryCode } from "../totp";
 import type { UserSettings } from "@shared/types";
+import { CLEF_SHADOW_MODEL, spamShadowEnabled, spamShadowReport } from "../ai/spam-shadow";
 
 const me = new Hono<AppEnv>();
+
+me.get("/spam-shadow", async (c) => {
+  const user = c.get("user");
+  c.header("Cache-Control", "no-store");
+  return c.json({
+    enabled: !!c.env.AI && spamShadowEnabled(safeJson<UserSettings>(user.settings_json, {})),
+    model: CLEF_SHADOW_MODEL,
+    ...(await spamShadowReport(c.env.DB, user.id)),
+  });
+});
 
 me.get("/", async (c) => {
   const user = c.get("user");

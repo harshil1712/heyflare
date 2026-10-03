@@ -8,6 +8,7 @@ import { parseAddressList, type ParsedMessage, type ParsedAttachment } from "./m
 import { htmlToText } from "./sanitize";
 import type { Address } from "@shared/types";
 import { maybeAutoScreenSpam } from "./ai/spam";
+import { recordSpamShadow } from "./ai/spam-shadow";
 
 const MAX_RAW = 25 * 1024 * 1024;
 const MAX_BLOB = 900 * 1024;
@@ -117,7 +118,7 @@ export async function parseInbound(raw: ReadableStream<Uint8Array> | ArrayBuffer
 }
 
 /** Store an already-parsed inbound message into a mailbox (dedupes on Message-ID). */
-export async function deliverInbound(env: Env, account: AccountRow, parsed: Omit<ParsedMessage, "threadId">, opts: IngestOptions = {}): Promise<{ added: number; threadIds: string[] }> {
+export async function deliverInbound(env: Env, account: AccountRow, parsed: Omit<ParsedMessage, "threadId">, opts: IngestOptions & { waitUntil?: (promise: Promise<unknown>) => void } = {}): Promise<{ added: number; threadIds: string[] }> {
   const db = env.DB;
   if (parsed.messageId) {
     const dup = await db.prepare(`SELECT id FROM messages WHERE account_id = ? AND (message_id_header = ? OR gmail_message_id = ?) LIMIT 1`).bind(account.id, parsed.messageId, parsed.gmailId).first();
@@ -131,10 +132,15 @@ export async function deliverInbound(env: Env, account: AccountRow, parsed: Omit
   const full: ParsedMessage = { ...parsed, threadId };
   const r = await ingestParsed(env, account, [full], opts);
   await db.prepare(`UPDATE accounts SET last_synced_at = ? WHERE id = ?`).bind(now(), account.id).run();
+  if (r.added) {
+    const shadow = recordSpamShadow(env, account, parsed, spam);
+    if (opts.waitUntil) opts.waitUntil(shadow);
+    else await shadow;
+  }
   return r;
 }
 
-export async function handleInboundEmail(message: ForwardableEmailMessage, env: Env): Promise<void> {
+export async function handleInboundEmail(message: ForwardableEmailMessage, env: Env, ctx?: Pick<ExecutionContext, "waitUntil">): Promise<void> {
   const db = env.DB;
   if (message.rawSize > MAX_RAW) {
     message.setReject("552 5.3.4 Message too large");
@@ -147,7 +153,7 @@ export async function handleInboundEmail(message: ForwardableEmailMessage, env: 
   }
   try {
     const parsed = await parseInbound(message.raw, message.from, message.to);
-    const r = await deliverInbound(env, mailbox, parsed);
+    const r = await deliverInbound(env, mailbox, parsed, { waitUntil: ctx ? (p) => ctx.waitUntil(p) : undefined });
     await logSync(db, mailbox.id, "info", `Inbound from ${parsed.from.email}: ${r.added ? "stored" : "duplicate"} (${parsed.subject.slice(0, 80)})`);
   } catch (e) {
     await logSync(db, mailbox.id, "error", `Inbound failed from ${message.from}: ${(e as Error).message}`);
