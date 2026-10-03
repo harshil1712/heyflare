@@ -94,9 +94,11 @@ Prerequisites: a Cloudflare account, Node 20+, and a Google Cloud project.
    - Authorized redirect URIs: `https://YOUR_HOST/auth/google/callback` and `http://localhost:8787/auth/google/callback`
 
 ### 2. Cloudflare
+Use Node.js 24 LTS with npm 11 (also used by CI).
+
 ```sh
 git clone https://github.com/doable-team/heyflare && cd heyflare
-npm install
+npm ci
 npx wrangler login
 npx wrangler d1 create heyflare-db          # copy the database_id
 cp wrangler.jsonc wrangler.local.jsonc      # set database_id, optionally account_id, routes/custom domain, APP_URL var
