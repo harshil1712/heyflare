@@ -7,6 +7,8 @@ import type { UserSettings } from "@shared/types";
 
 export const SPAM_MODEL = "@cf/cloudflare/clef";
 export const SPAM_THRESHOLD = 0.95;
+export const SPAM_BODY_MAX_CHARS = 8_000;
+// Classification precedes ingestion; limit the wait so slow inference cannot hold up storage.
 export const SPAM_TIMEOUT_MS = 8_000;
 
 export type SpamVerdict = "spam" | "ham" | "unsure";
@@ -45,6 +47,7 @@ export async function classifySpam(env: Env, msg: Classifiable): Promise<SpamVer
     }, SPAM_TIMEOUT_MS);
   });
   try {
+    const body = msg.text.replace(/\s+/g, " ").trim() || msg.snippet.replace(/\s+/g, " ").trim();
     const from = msg.from.name ? `${msg.from.name} <${msg.from.email}>` : msg.from.email;
     const res = await Promise.race([
       env.AI.run(SPAM_MODEL, {
@@ -54,7 +57,7 @@ export async function classifySpam(env: Env, msg: Classifiable): Promise<SpamVer
           `Subject: ${(msg.subject || "(none)").slice(0, 500)}`,
           `Has List-Unsubscribe: ${msg.listUnsubscribe ? "yes" : "no"}`,
           msg.precedence ? `Precedence: ${msg.precedence.slice(0, 100)}` : "",
-          `Snippet: ${(msg.text || msg.snippet || "").replace(/\s+/g, " ").trim().slice(0, 500) || "(empty)"}`,
+          `Body${body.length > SPAM_BODY_MAX_CHARS ? " (truncated)" : ""}: ${body.slice(0, SPAM_BODY_MAX_CHARS) || "(empty)"}`,
         ].filter(Boolean).join("\n"),
         questions: {
           spam: {
