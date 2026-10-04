@@ -36,7 +36,7 @@ lives in a resizable side panel and can see the thread you're reading.
 ## Features
 
 - **The Screener** — every first-time sender waits for a yes/no. Decide once per person, across all your accounts.
-- **AI spam screen (custom domains)** — Workers AI (Gemma 4) auto-screens clear spam for domain mailboxes; Gmail still uses Google’s filter.
+- **AI spam screen (custom domains)** — Workers AI (Clef) auto-screens clear spam for domain mailboxes; Gmail still uses Google’s filter.
 - **Imbox, The Feed, Paper Trail** — people, newsletters, receipts. "New for you" vs "Previously seen".
 - **Power through new** — the whole "New for you" queue stacked on one page: reply, defer or file each one, `o` to start.
 - **Reply Later, Set Aside, Bubble Up** — trays docked in the Imbox, Focus & Reply mode, snooze with presets.
@@ -80,7 +80,7 @@ The button **clones** the repo into your account (Cloudflare's flow can't fork).
 
 ## Deploy manually
 
-Prerequisites: a Cloudflare account, Node 20+, and a Google Cloud project.
+Prerequisites: a Cloudflare account, Node 24 LTS with npm 11, and a Google Cloud project.
 
 ### 1. Google OAuth client
 1. https://console.cloud.google.com → create a project.
@@ -210,19 +210,13 @@ Works on desktop, Android, and **iOS Home Screen PWAs** (Share → Add to Home S
 
 ### Custom-domain spam (Workers AI)
 
-Domain mailboxes have no Gmail spam layer. With the `AI` binding (see `wrangler.jsonc`), inbound mail is classified by **Gemma 4** (`@cf/google/gemma-4-26b-a4b-it`). Clear spam is auto-moved to Screened out; `ham` / `unsure` still go through the Screener. Toggle under Settings → Mail (`aiSpamScreen`, default on). Requires Workers AI usage on your account.
+Domain mailboxes have no Gmail spam layer. With the `AI` binding (see `wrangler.jsonc`), inbound mail is classified by **Clef** (`@cf/cloudflare/clef`), replacing Gemma rather than running alongside it. Toggle under Settings → Mail (`aiSpamScreen`, default on). Requires Workers AI usage on your account. Gmail continues to use Google's spam filter.
 
-#### Clef shadow trial
+Clef receives bounded From/Subject/Precedence fields, List-Unsubscribe presence, and up to 500 characters of plain-text content. Email content is treated as untrusted data, separate from the typed `noul` question. A valid `answers.spam.noul` score **≥ 0.95** means `spam`; scores **≤ 0.05** mean `ham`, and intermediate scores mean `unsure`. Missing, malformed, out-of-range responses, errors, and an eight-second timeout all return `unsure`. There is no Gemma fallback, retry, parallel scoring, score storage, or report endpoint.
 
-After successful delivery, **Clef** (`@cf/cloudflare/clef`) also scores each new custom-domain message in the email handler's `waitUntil` background task. It never changes contacts, threads, delivery, or Gemma's existing request/parsing behavior. This includes already-screened senders, for which the recorded Gemma verdict is `skipped`; Gmail, duplicate deliveries, and mail with AI screening disabled are excluded.
+Only new or pending senders are classified, before ingestion; previously screened senders and duplicate deliveries keep their existing behavior. `spam` still screens out the **sender**, affecting future mail too; `ham` / `unsure` leave the sender pending in the normal Screener flow. This replacement does not add message-level quarantine or undo earlier screening decisions. Disable automatic screening with `aiSpamScreen: false`.
 
-The trial runs automatically when Workers AI and AI spam screening are enabled. It adds **one billable Clef request per new domain email**, with no retries and an eight-second deadline/abort signal. Turn off only shadow collection with `PATCH /api/me` and `{"settings":{"aiSpamShadow":false}}`; turning off `aiSpamScreen` disables both models. Re-enable shadow collection with `aiSpamShadow: true`. There is no separate shadow toggle in the UI yet.
-
-Clef receives bounded From/Subject/Precedence fields, List-Unsubscribe presence, and up to 500 characters of plain-text content. This sends additional mail (including known senders) to Cloudflare Workers AI, not to a third-party BYOK provider. D1 stores only the internal message reference, model/prompt version, actual Gemma verdict, Clef score/status, timestamp, and latency—no duplicate bodies, subjects, sender addresses, raw responses, or exception text. Failures are recorded as `error`, `invalid_response`, or `timeout`; interrupted tasks can remain `pending`. Recording failures never reject mail and emit only a generic warning.
-
-Authenticated `GET /api/me/spam-shadow` returns a private rolling 30-day summary and the latest 50 observations across the owner's accounts. Summary groups retain all attempts, including errors/pending work, and count Clef's hypothetical flags at **0.95**, an exploratory threshold—not a delivery rule. `ham`/`spam` Gemma rows allow comparisons; `unsure` includes current Gemma failures, and `skipped` is not a model prediction. No false-positive rate, recall, or accuracy is claimed: neither Gemma nor a sender's current screen status is ground truth. Review both disagreements and a random sample of agreements before considering a production switch.
-
-The cron removes expired observations in batches of 500; deletion of the source message/account also cascades to its observations. Disabling collection does not erase the existing 30-day history. Reports are never sent to the public benchmark project. Migration `0023_spam_shadow.sql` applies automatically on first use, like existing migrations. No deployment or model switch happens merely by opening a PR; the shadow trial starts after deployment.
+The **0.95** cutoff is an initial policy based on the small public benchmark, not a calibrated probability or proven production error rate. False positives remain possible, especially with sender-level screening. No schema migration or manual endpoint call is needed; Clef becomes the active classifier after this code is deployed.
 
 ### Attachments (R2) and retention
 
@@ -257,4 +251,4 @@ Optional BYOK presets (Anthropic, OpenAI, xAI, OpenRouter, Gemini, custom OpenAI
 preferences, and notes on people. It learns from the mail you send (at most twice a day, can be turned off), from what it does
 for you, and from notes you add. Everything is visible and editable in Settings → AI → Memory, and can be wiped.
 
-**Privacy**: mail is sent to the configured provider for assistant features (chat, reply, summarise, or background learning). Separately, enabled custom-domain spam screening and the Clef shadow trial send bounded email content to Cloudflare Workers AI on arrival; see the controls above.
+**Privacy**: mail is sent to the configured provider for assistant features (chat, reply, summarise, or background learning). Separately, enabled custom-domain spam screening sends bounded email content to Cloudflare Workers AI on arrival; see the controls above.

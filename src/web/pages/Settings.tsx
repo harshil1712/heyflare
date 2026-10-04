@@ -721,7 +721,7 @@ export function PreferencesSection({ compact }: { compact?: boolean }) {
         </Row>
         <Row
           label="AI spam screen (custom domains)"
-          hint="Workers AI (Gemma 4) auto-screens clear spam for domain mailboxes. Gmail still uses Google's spam filter. Ambiguous mail stays in the Screener."
+          hint="Workers AI (Clef) auto-screens clear spam for domain mailboxes. Gmail still uses Google's spam filter. Ambiguous mail stays in the Screener."
         >
           <Switch
             checked={settings.aiSpamScreen !== false}

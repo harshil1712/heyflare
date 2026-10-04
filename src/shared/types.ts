@@ -24,12 +24,10 @@ export interface UserSettings {
   /** Days to keep Trash threads (0 = forever). */
   trashRetentionDays?: number;
   /**
-   * Custom-domain inbound: use Workers AI (Gemma 4) to auto screen-out clear spam.
+   * Custom-domain inbound: use Workers AI (Clef) to auto screen-out clear spam.
    * Default on when unset. Gmail still uses Google's SPAM label instead.
    */
   aiSpamScreen?: boolean;
-  /** Record Clef shadow scores for domain mail without affecting delivery. Default on; aiSpamScreen: false also disables this. */
-  aiSpamShadow?: boolean;
 }
 
 export interface Account {

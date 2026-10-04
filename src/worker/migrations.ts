@@ -24,7 +24,6 @@ import m0019 from "../../migrations/0019_api_tokens.sql";
 import m0020 from "../../migrations/0020_web_push.sql";
 import m0021 from "../../migrations/0021_r2_retention.sql";
 import m0022 from "../../migrations/0022_device_tokens.sql";
-import m0023 from "../../migrations/0023_spam_shadow.sql";
 import { maybeBackfillFts } from "./fts";
 
 export const MIGRATIONS: { name: string; sql: string }[] = [
@@ -50,7 +49,6 @@ export const MIGRATIONS: { name: string; sql: string }[] = [
   { name: "0020_web_push.sql", sql: m0020 },
   { name: "0021_r2_retention.sql", sql: m0021 },
   { name: "0022_device_tokens.sql", sql: m0022 },
-  { name: "0023_spam_shadow.sql", sql: m0023 },
 ];
 
 /** Split a migration file into statements: full-line comments dropped, split on `;` at end of line.
