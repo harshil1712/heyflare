@@ -36,7 +36,7 @@ lives in a resizable side panel and can see the thread you're reading.
 ## Features
 
 - **The Screener** — every first-time sender waits for a yes/no. Decide once per person, across all your accounts.
-- **AI spam screen (custom domains)** — Workers AI (Gemma 4) auto-screens clear spam for domain mailboxes; Gmail still uses Google’s filter.
+- **AI spam screen (custom domains)** — Workers AI (Clef) auto-screens clear spam for domain mailboxes; Gmail still uses Google’s filter.
 - **Imbox, The Feed, Paper Trail** — people, newsletters, receipts. "New for you" vs "Previously seen".
 - **Power through new** — the whole "New for you" queue stacked on one page: reply, defer or file each one, `o` to start.
 - **Reply Later, Set Aside, Bubble Up** — trays docked in the Imbox, Focus & Reply mode, snooze with presets.
@@ -80,7 +80,7 @@ The button **clones** the repo into your account (Cloudflare's flow can't fork).
 
 ## Deploy manually
 
-Prerequisites: a Cloudflare account, Node 20+, and a Google Cloud project.
+Prerequisites: a Cloudflare account, Node 24 LTS with npm 11, and a Google Cloud project.
 
 ### 1. Google OAuth client
 1. https://console.cloud.google.com → create a project.
@@ -94,9 +94,11 @@ Prerequisites: a Cloudflare account, Node 20+, and a Google Cloud project.
    - Authorized redirect URIs: `https://YOUR_HOST/auth/google/callback` and `http://localhost:8787/auth/google/callback`
 
 ### 2. Cloudflare
+Use Node.js 24 LTS with npm 11 (also used by CI).
+
 ```sh
 git clone https://github.com/doable-team/heyflare && cd heyflare
-npm install
+npm ci
 npx wrangler login
 npx wrangler d1 create heyflare-db          # copy the database_id
 cp wrangler.jsonc wrangler.local.jsonc      # set database_id, optionally account_id, routes/custom domain, APP_URL var
@@ -172,6 +174,8 @@ Inbound mail can be simulated against the local worker: `POST http://localhost:8
 
 Money-path tests run inside the Workers runtime via `@cloudflare/vitest-plugin` (real D1 + migrations):
 
+Tests disable remote bindings and opt into explicit Workers AI mocks; they need no Cloudflare credentials and do not run paid inference.
+
 ```sh
 npm test          # vitest run
 npm run check     # TypeScript (app + worker)
@@ -206,7 +210,15 @@ Works on desktop, Android, and **iOS Home Screen PWAs** (Share → Add to Home S
 
 ### Custom-domain spam (Workers AI)
 
-Domain mailboxes have no Gmail spam layer. With the `AI` binding (see `wrangler.jsonc`), inbound mail is classified by **Gemma 4** (`@cf/google/gemma-4-26b-a4b-it`). Clear spam is auto-moved to Screened out; `ham` / `unsure` still go through the Screener. Toggle under Settings → Mail (`aiSpamScreen`, default on). Requires Workers AI usage on your account.
+Domain mailboxes have no Gmail spam layer. With the `AI` binding (see `wrangler.jsonc`), inbound mail is classified by **Clef** (`@cf/cloudflare/clef`), replacing Gemma rather than running alongside it. Toggle under Settings → Mail (`aiSpamScreen`, default on). Requires Workers AI usage on your account. Gmail continues to use Google's spam filter.
+
+Clef receives bounded From/Subject/Precedence fields, List-Unsubscribe presence, and the plain-text **body**, with whitespace normalized and a limit of **8,000 characters** (`SPAM_BODY_MAX_CHARS`). The UI snippet is only a fallback when the normalized body is empty. Bodies within the limit are sent in full; longer bodies use their first 8,000 characters and are labeled `Body (truncated)`. Raw MIME, HTML markup, and attachments are not sent. This explicit budget bounds input cost rather than relying on Clef's much larger context window.
+
+Email content is treated as untrusted data, separate from the typed `noul` question. A valid `answers.spam.noul` score **≥ 0.95** means `spam`; scores **≤ 0.05** mean `ham`, and intermediate scores mean `unsure`. Missing, malformed, out-of-range responses, errors, and an eight-second timeout all return `unsure`. The deadline is a delivery policy, not a Clef requirement: classification runs before storage, so a slow response must not keep mail waiting for inference. There is no Gemma fallback, retry, parallel scoring, score storage, or report endpoint.
+
+Only new or pending senders are classified, before ingestion; previously screened senders and duplicate deliveries keep their existing behavior. `spam` still screens out the **sender**, affecting future mail too; `ham` / `unsure` leave the sender pending in the normal Screener flow. This replacement does not add message-level quarantine or undo earlier screening decisions. Disable automatic screening with `aiSpamScreen: false`.
+
+The **0.95** cutoff is an initial policy based on the small public benchmark, not a calibrated probability or proven production error rate. That benchmark used shorter inputs; quality and latency with the expanded body budget have not been re-evaluated against live inference. False positives remain possible, especially with sender-level screening. No schema migration or manual endpoint call is needed; Clef becomes the active classifier after this code is deployed.
 
 ### Attachments (R2) and retention
 
@@ -241,4 +253,4 @@ Optional BYOK presets (Anthropic, OpenAI, xAI, OpenRouter, Gemini, custom OpenAI
 preferences, and notes on people. It learns from the mail you send (at most twice a day, can be turned off), from what it does
 for you, and from notes you add. Everything is visible and editable in Settings → AI → Memory, and can be wiped.
 
-**Privacy**: mail is only sent to the model when you use an AI feature (chat, reply, summarise, or background learning).
+**Privacy**: mail is sent to the configured provider for assistant features (chat, reply, summarise, or background learning). Separately, enabled custom-domain spam screening sends bounded email content to Cloudflare Workers AI on arrival; see the controls above.
