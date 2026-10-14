@@ -161,10 +161,12 @@ export function useMe(enabled = true) {
 
 // ---------- Mail ----------
 export function useCounts(enabled = true) {
-  return useQuery({ queryKey: keys.counts, queryFn: () => api.get<T.Counts>("/api/counts"), refetchInterval: 30_000, enabled });
+  // Pushes drive live refresh now; this slow poll is only the no-push-permission fallback.
+  return useQuery({ queryKey: keys.counts, queryFn: () => api.get<T.Counts>("/api/counts"), refetchInterval: 120_000, enabled });
 }
 export function useImbox(enabled = true) {
-  return useQuery({ queryKey: keys.imbox, queryFn: () => api.get<T.ImboxResponse>("/api/imbox"), refetchInterval: 60_000, enabled });
+  // Pushes drive live refresh now; this slow poll is only the no-push-permission fallback.
+  return useQuery({ queryKey: keys.imbox, queryFn: () => api.get<T.ImboxResponse>("/api/imbox"), refetchInterval: 300_000, enabled });
 }
 
 export interface ThreadsPage {
@@ -178,7 +180,8 @@ export function useThreads(bucket: string, opts: { q?: string; label?: string; e
     queryFn: ({ pageParam }) => api.get<ThreadsPage>(`/api/threads${qs({ bucket, q: opts.q, label: opts.label, page: pageParam })}`),
     initialPageParam: 0,
     getNextPageParam: (last) => last.next_page ?? undefined,
-    refetchInterval: 60_000,
+    // Pushes drive live refresh now; this slow poll is only the no-push-permission fallback.
+    refetchInterval: 300_000,
     enabled: opts.enabled ?? true,
   });
 }
@@ -193,7 +196,8 @@ export function useFeed(enabled = true, show: "new" | "all" = "new") {
     queryFn: ({ pageParam }) => api.get<FeedPage>(`/api/feed${qs({ page: pageParam, show })}`),
     initialPageParam: 0,
     getNextPageParam: (last) => last.next_page ?? undefined,
-    refetchInterval: 60_000,
+    // Pushes drive live refresh now; this slow poll is only the no-push-permission fallback.
+    refetchInterval: 300_000,
     enabled,
   });
 }
@@ -259,7 +263,8 @@ export interface ScreenerSender {
   suggestion: "imbox" | "feed" | "paper_trail";
 }
 export function useScreener(enabled = true) {
-  return useQuery({ queryKey: keys.screener, queryFn: () => api.get<{ senders: ScreenerSender[] }>("/api/screener"), refetchInterval: 60_000, enabled });
+  // Pushes drive live refresh now; this slow poll is only the no-push-permission fallback.
+  return useQuery({ queryKey: keys.screener, queryFn: () => api.get<{ senders: ScreenerSender[] }>("/api/screener"), refetchInterval: 300_000, enabled });
 }
 export function useScreenerDecide() {
   const qc = useQueryClient();
@@ -322,7 +327,7 @@ export function useLabelMutations() {
   };
 }
 export function useLabelThreads(id: string | undefined) {
-  return useQuery({ queryKey: ["threads", "label", id], queryFn: () => api.get<{ threads: T.ThreadSummary[] }>(`/api/labels/${id}/threads`), enabled: !!id, refetchInterval: 60_000 });
+  return useQuery({ queryKey: ["threads", "label", id], queryFn: () => api.get<{ threads: T.ThreadSummary[] }>(`/api/labels/${id}/threads`), enabled: !!id, refetchInterval: 300_000 });
 }
 
 // ---------- Collections ----------

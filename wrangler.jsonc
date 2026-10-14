@@ -21,8 +21,12 @@
   "r2_buckets": [
     { "binding": "ATTACHMENTS", "bucket_name": "heyflare-attachments" }
   ],
-  // Every minute: Gmail incremental sync, bubble-ups, scheduled sends, contact photos.
-  "triggers": { "crons": ["* * * * *"] },
+  // Cron split (dispatched by runCron in src/worker/index.ts):
+  // - "* * * * *" every minute: only time-precision work — bubble-ups, scheduled sends, and the Gmail watch
+  //   sweep (missed-push recovery + watch renewal; Pub/Sub is the primary ingest path).
+  // - "*/15 * * * *" every 15 minutes: the rest — AI learning (self-gates to 12h internally), calendar sync,
+  //   and the attachment/retention sweep.
+  "triggers": { "crons": ["* * * * *", "*/15 * * * *"] },
   "vars": {
     "APP_NAME": "heyflare",
     "WORKER_NAME": "heyflare"

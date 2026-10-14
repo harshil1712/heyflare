@@ -94,37 +94,74 @@ app.all("*", async (c) => {
   return c.env.ASSETS.fetch(c.req.raw);
 });
 
-async function runCron(env: Env) {
+// ── Cron dispatch ─────────────────────────────────────────────────────────────────────────────
+// Two registered triggers (see wrangler.jsonc): "* * * * *" and "*/15 * * * *". The minute tick runs
+// only time-precision work; everything tolerant of a coarser cadence runs every 15 minutes. This cuts
+// the idle D1 query baseline roughly in half without touching any subsystem's own logic.
+
+const QUARTER_HOUR_CRON = "*/15 * * * *";
+
+/**
+ * True when a cron event should run the minute-precision set. Only the exact quarter-hour pattern
+ * gets the slow cadence; unknown patterns default to the minute set (safe side).
+ */
+export function shouldRunMinute(cron: string): boolean {
+  return cron.trim() !== QUARTER_HOUR_CRON;
+}
+
+/** The six cron subsystems, injectable so tests can spy on the dispatch. */
+export interface CronSubsystems {
+  bubbleUps: (db: Env["DB"]) => Promise<unknown>;
+  scheduledSends: (env: Env) => Promise<unknown>;
+  learning: (env: Env) => Promise<unknown>;
+  calendarSync: (env: Env) => Promise<unknown>;
+  watchSweep: (env: Env) => Promise<unknown>;
+  retention: (env: Env) => Promise<unknown>;
+}
+
+export const cronSubsystems: CronSubsystems = {
+  bubbleUps: (db) => processBubbleUps(db),
+  scheduledSends: (env) => processScheduledSends(env),
+  learning: (env) => runLearning(env),
+  calendarSync: (env) => runCalendarSync(env),
+  watchSweep: (env) => sweepGmailWatches(env),
+  // Lazy-loaded as before — the retention code only lands in the isolate when a tick needs it.
+  retention: (env) => import("./blobs").then((m) => m.sweepRetention(env)),
+};
+
+export async function runCron(env: Env, cron: string, systems: CronSubsystems = cronSubsystems) {
   const db = env.DB;
-  try {
-    await processBubbleUps(db);
-  } catch (e) {
-    console.error("bubble up failed", e);
+  if (shouldRunMinute(cron)) {
+    try {
+      await systems.bubbleUps(db);
+    } catch (e) {
+      console.error("bubble up failed", e);
+    }
+    try {
+      await systems.scheduledSends(env);
+    } catch (e) {
+      console.error("scheduled sends failed", e);
+    }
+    // Pub/Sub is the primary ingest path; cron only renews watches and catches missed pushes.
+    try {
+      await systems.watchSweep(env);
+    } catch (e) {
+      console.error("gmail watch sweep failed", e);
+    }
+    return;
   }
   try {
-    await processScheduledSends(env);
-  } catch (e) {
-    console.error("scheduled sends failed", e);
-  }
-  try {
-    await runLearning(env);
+    await systems.learning(env);
   } catch (e) {
     console.error("ai learning failed", e);
   }
   try {
-    await runCalendarSync(env);
+    await systems.calendarSync(env);
   } catch (e) {
     console.error("calendar sync failed", e);
   }
-  // Pub/Sub is the primary ingest path; cron only renews watches and catches missed pushes.
   try {
-    await sweepGmailWatches(env);
-  } catch (e) {
-    console.error("gmail watch sweep failed", e);
-  }
-  try {
-    const { sweepRetention } = await import("./blobs");
-    await sweepRetention(env);
+    await systems.retention(env);
   } catch (e) {
     console.error("retention sweep failed", e);
   }
@@ -145,8 +182,8 @@ export default {
     if (agentResponse) return agentResponse;
     return app.fetch(request, env, ctx);
   },
-  scheduled: (_event: ScheduledEvent, env: Env, ctx: ExecutionContext) => {
-    ctx.waitUntil(ensureMigrations(env).then(() => runCron(env)));
+  scheduled: (event: ScheduledEvent, env: Env, ctx: ExecutionContext) => {
+    ctx.waitUntil(ensureMigrations(env).then(() => runCron(env, event.cron)));
   },
   // Cloudflare Email Routing → custom-domain mailboxes.
   email: async (message: ForwardableEmailMessage, env: Env, _ctx: ExecutionContext) => {

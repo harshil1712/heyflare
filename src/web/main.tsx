@@ -1,6 +1,7 @@
 import { installConnectInterceptor } from "./lib/connect";
 import { installBuildWatcher } from "./lib/update";
 import { registerServiceWorker } from "./lib/push";
+import { installSwMessageListener } from "./lib/sw-events";
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
@@ -25,4 +26,5 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
 );
 installConnectInterceptor();
 installBuildWatcher();
+installSwMessageListener(queryClient);
 void registerServiceWorker();

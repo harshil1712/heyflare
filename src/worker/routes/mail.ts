@@ -6,8 +6,9 @@ import { now, chunk, placeholders, safeJson, runBatch, threadsWithLabels, toThre
 import type { ContactRow, AccountRow } from "../db";
 import { gmailFetch, gmailJson, gmailPost } from "../google";
 import { b64urlDecodeBytes } from "../mime";
-import type { Address, Bucket, ThreadDetail, ImboxResponse, Counts } from "@shared/types";
+import type { Address, Bucket, ThreadDetail, ImboxResponse } from "@shared/types";
 import { searchThreads } from "../fts";
+import { getCounts } from "../counts";
 
 const mail = new Hono<AppEnv>();
 
@@ -44,36 +45,11 @@ function scope(c: any, alias = "t"): { sql: string; params: string[] } {
 }
 
 // ---------- Counts ----------
+// Maintained by triggers (migrations 0023/0024): two O(#accounts) counter reads instead of six
+// COUNT(...) statements that scan growing thread/bundle ranges.
 mail.get("/counts", async (c) => {
-  const db = c.env.DB;
-  const t = now();
-  const sc = scope(c);
-  const q = (sql: string) => {
-    // Bind (scope params + now) once per occurrence of the scope clause in the SQL.
-    const times = sql.split(sc.sql).length - 1;
-    const params: unknown[] = [];
-    for (let i = 0; i < times; i++) params.push(...sc.params, t);
-    return db.prepare(sql).bind(...params).first<{ n: number }>();
-  };
-  const [screener, imbox, feed, paper, rl, sa] = await Promise.all([
-    q(`SELECT COUNT(DISTINCT t.account_id || '|' || t.last_from_email) AS n FROM threads t WHERE ${sc.sql} AND t.bucket = 'screener' AND ${VISIBLE}`),
-    q(`SELECT (SELECT COUNT(*) FROM threads t WHERE ${sc.sql} AND t.bucket = 'imbox' AND t.bundle_id IS NULL AND t.seen = 0 AND t.reply_later = 0 AND t.set_aside = 0 AND ${VISIBLE})
-             + (SELECT COUNT(*) FROM bundles b WHERE b.status = 'open' AND EXISTS (SELECT 1 FROM threads t WHERE t.bundle_id = b.id AND ${sc.sql} AND t.bucket = 'imbox' AND t.reply_later = 0 AND t.set_aside = 0 AND ${VISIBLE})) AS n`),
-    q(`SELECT COUNT(*) AS n FROM threads t WHERE ${sc.sql} AND t.bucket = 'feed' AND t.seen = 0 AND ${VISIBLE}`),
-    q(`SELECT (SELECT COUNT(*) FROM threads t WHERE ${sc.sql} AND t.bucket = 'paper_trail' AND t.bundle_id IS NULL AND t.seen = 0 AND ${VISIBLE})
-             + (SELECT COUNT(*) FROM bundles b WHERE b.status = 'open' AND EXISTS (SELECT 1 FROM threads t WHERE t.bundle_id = b.id AND ${sc.sql} AND t.bucket = 'paper_trail' AND ${VISIBLE})) AS n`),
-    q(`SELECT COUNT(*) AS n FROM threads t WHERE ${sc.sql} AND t.reply_later = 1 AND ${VISIBLE}`),
-    q(`SELECT COUNT(*) AS n FROM threads t WHERE ${sc.sql} AND t.set_aside = 1 AND ${VISIBLE}`),
-  ]);
-  const out: Counts = {
-    screener: screener?.n ?? 0,
-    imbox_new: imbox?.n ?? 0,
-    feed_new: feed?.n ?? 0,
-    paper_trail_new: paper?.n ?? 0,
-    reply_later: rl?.n ?? 0,
-    set_aside: sa?.n ?? 0,
-  };
-  return c.json(out);
+  const counts = await getCounts(c.env.DB, c.get("accountIds") ?? []);
+  return c.json(counts);
 });
 
 // ---------- Imbox ----------

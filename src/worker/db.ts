@@ -494,42 +494,64 @@ export interface BundleRow {
 export async function loadBundles(db: D1Database, accountIds: string[], bucket: "imbox" | "paper_trail", now_: number): Promise<Bundle[]> {
   if (!accountIds.length) return [];
   const sc = inClause(accountIds);
+  // Query 1/2: bundle rows, with the live counts folded in as correlated subselects.
+  // The counts deliberately have NO bucket filter and NO bubble filter — same semantics as before:
+  // they cover every non-merged, non-reply-later, non-set-aside thread of the bundle.
   const rows = await db
     .prepare(
-      `SELECT b.*, c.name AS contact_name, c.avatar_url AS contact_avatar FROM bundles b
+      `SELECT b.*, c.name AS contact_name, c.avatar_url AS contact_avatar,
+         (SELECT COUNT(*) FROM threads t WHERE t.bundle_id = b.id AND t.merged_into IS NULL AND t.reply_later = 0 AND t.set_aside = 0) AS live_threads,
+         (SELECT COALESCE(SUM(t.message_count), 0) FROM threads t WHERE t.bundle_id = b.id AND t.merged_into IS NULL AND t.reply_later = 0 AND t.set_aside = 0) AS live_messages
+       FROM bundles b
        LEFT JOIN contacts c ON c.id = b.contact_id
        WHERE b.account_id IN ${sc.sql}
          AND EXISTS (SELECT 1 FROM threads t WHERE t.bundle_id = b.id AND t.bucket = ? AND t.merged_into IS NULL AND t.reply_later = 0 AND t.set_aside = 0 AND (t.bubble_up_at IS NULL OR t.bubble_up_at <= ?))
        ORDER BY b.last_message_at DESC LIMIT 200`
     )
     .bind(...sc.params, bucket, now_)
-    .all<BundleRow & { contact_name: string | null; contact_avatar: string | null }>();
+    .all<BundleRow & { contact_name: string | null; contact_avatar: string | null; live_threads: number; live_messages: number }>();
   if (!rows.results.length) return [];
+  // Query 2/2: the latest visible thread for every bundle of these accounts in one pass.
+  // Same visibility filters as the per-bundle query it replaces; the join back to bundles scopes
+  // it to the accounts in question (the EXISTS check in query 1 already filtered those bundles).
+  const latestRows = await db
+    .prepare(
+      `SELECT x.* FROM (
+         SELECT t.*, ROW_NUMBER() OVER (PARTITION BY t.bundle_id ORDER BY t.last_message_at DESC) AS rn
+         FROM threads t JOIN bundles b ON b.id = t.bundle_id
+         WHERE b.account_id IN ${sc.sql} AND t.bucket = ? AND t.merged_into IS NULL AND t.reply_later = 0 AND t.set_aside = 0 AND (t.bubble_up_at IS NULL OR t.bubble_up_at <= ?)
+       ) x WHERE x.rn = 1`
+    )
+    .bind(...sc.params, bucket, now_)
+    .all<ThreadRow & { rn: number }>();
+  const latestByBundle = new Map<string, ThreadRow>();
+  for (const r of latestRows.results) if (r.bundle_id) latestByBundle.set(r.bundle_id, r); // non-null via the JOIN
+  const latest = new Map<string, ThreadSummary>();
+  const summaries: ThreadSummary[] = [];
+  for (const b of rows.results) {
+    const lr = latestByBundle.get(b.id);
+    if (!lr) continue; // no visible thread — same skip as the old per-bundle guard
+    const s = toThreadSummary(lr, []);
+    latest.set(b.id, s);
+    summaries.push(s);
+  }
+  // One shared avatar pass for all latest threads.
+  await attachAvatars(db, summaries);
   const out: Bundle[] = [];
   for (const b of rows.results) {
-    const latestRow = await db
-      .prepare(
-        `SELECT t.* FROM threads t WHERE t.bundle_id = ? AND t.bucket = ? AND t.merged_into IS NULL AND t.reply_later = 0 AND t.set_aside = 0 AND (t.bubble_up_at IS NULL OR t.bubble_up_at <= ?) ORDER BY t.last_message_at DESC LIMIT 1`
-      )
-      .bind(b.id, bucket, now_)
-      .first<ThreadRow>();
-    if (!latestRow) continue;
-    const counts = await db
-      .prepare(`SELECT COUNT(*) AS threads, COALESCE(SUM(message_count), 0) AS messages FROM threads t WHERE t.bundle_id = ? AND t.merged_into IS NULL AND t.reply_later = 0 AND t.set_aside = 0`)
-      .bind(b.id)
-      .first<{ threads: number; messages: number }>();
-    const [latest] = await attachAvatars(db, [toThreadSummary(latestRow, [])]);
+    const s = latest.get(b.id);
+    if (!s) continue;
     out.push({
       id: b.id,
       contact_id: b.contact_id,
       account_id: b.account_id,
       email: b.email,
-      name: b.contact_name || latest.last_from.name || b.email,
-      avatar_url: b.contact_avatar || latest.last_from.avatar_url || "",
+      name: b.contact_name || s.last_from.name || b.email,
+      avatar_url: b.contact_avatar || s.last_from.avatar_url || "",
       status: b.status,
-      thread_count: counts?.threads ?? b.thread_count,
-      message_count: counts?.messages ?? b.message_count,
-      latest,
+      thread_count: b.live_threads ?? b.thread_count,
+      message_count: b.live_messages ?? b.message_count,
+      latest: s,
       first_message_at: b.first_message_at,
       last_message_at: b.last_message_at,
     });

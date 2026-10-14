@@ -2,6 +2,7 @@
 import type { Env } from "./env";
 import type { ThreadRow } from "./db";
 import { uid, now } from "./db";
+import { accountIdsForUser, badgeCount } from "./counts";
 
 const COOLDOWN_MS = 6 * 3600_000; // don't re-notify the same thread within 6h
 
@@ -195,30 +196,12 @@ export async function sendPush(
 
 /**
  * Unseen Imbox + Screener counts for the home-screen badge (PWA Badging API).
- * Scoped to every account the user owns.
+ * Scoped to every account the user owns. Reads the trigger-maintained counters
+ * (migrations 0023/0024) instead of scanning thread/bundle ranges.
  */
 export async function appBadgeCount(db: D1Database, userId: string): Promise<number> {
-  const t = now();
-  const visible = `t.merged_into IS NULL AND (t.bubble_up_at IS NULL OR t.bubble_up_at <= ?)`;
-  const row = await db
-    .prepare(
-      `SELECT
-         (SELECT COUNT(*) FROM threads t JOIN accounts a ON a.id = t.account_id
-           WHERE a.user_id = ? AND t.bucket = 'imbox' AND t.bundle_id IS NULL AND t.seen = 0
-             AND t.reply_later = 0 AND t.set_aside = 0 AND ${visible})
-       + (SELECT COUNT(*) FROM bundles b
-           WHERE b.status = 'open' AND EXISTS (
-             SELECT 1 FROM threads t JOIN accounts a ON a.id = t.account_id
-             WHERE t.bundle_id = b.id AND a.user_id = ? AND t.bucket = 'imbox'
-               AND t.reply_later = 0 AND t.set_aside = 0 AND ${visible}
-           ))
-       + (SELECT COUNT(DISTINCT t.account_id || '|' || t.last_from_email) FROM threads t JOIN accounts a ON a.id = t.account_id
-           WHERE a.user_id = ? AND t.bucket = 'screener' AND ${visible})
-       AS n`
-    )
-    .bind(userId, t, userId, t, userId, t)
-    .first<{ n: number }>();
-  return Math.max(0, row?.n ?? 0);
+  const ids = await accountIdsForUser(db, userId);
+  return badgeCount(db, ids);
 }
 
 /**

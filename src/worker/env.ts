@@ -38,6 +38,8 @@ export interface Env {
 
 export type Variables = {
   user: UserRow;
+  /** All accounts the user owns, joined into the auth query and stashed by `requireUser` (see auth.ts). */
+  accounts?: AccountRow[];
   /** Primary account: the specific one when `X-Account-Id` names one, else the user's first account. Null only when the user has no accounts (routes then 400). */
   account: AccountRow | null;
   /** Account ids in scope for list/count queries: `[id]` for a specific account, all of the user's ids for unified scope. */

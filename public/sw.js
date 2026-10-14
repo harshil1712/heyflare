@@ -1,5 +1,5 @@
 /* heyflare service worker — installable PWA + Web Push (desktop, Android, iOS Home Screen). */
-const SW_VERSION = "heyflare-sw-v2";
+const SW_VERSION = "heyflare-sw-v3";
 
 self.addEventListener("install", (event) => {
   event.waitUntil(self.skipWaiting());
@@ -16,6 +16,16 @@ async function setBadge(count) {
     else if (n <= 0 && self.navigator?.clearAppBadge) await self.navigator.clearAppBadge();
   } catch {
     /* Badging API unavailable or permission missing */
+  }
+}
+
+/** Relay a mail push to every open tab so a focused page refetches instantly. */
+async function broadcastNewMail(badge) {
+  try {
+    const wins = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+    for (const w of wins) w.postMessage({ type: "heyflare:new-mail", badge });
+  } catch {
+    /* no open windows to message */
   }
 }
 
@@ -51,6 +61,7 @@ self.addEventListener("push", (event) => {
         }
       }
       await setBadge(badge);
+      await broadcastNewMail(badge);
       await self.registration.showNotification(title, {
         body,
         icon: "/icon-192.png",
@@ -67,6 +78,8 @@ self.addEventListener("notificationclick", (event) => {
   event.waitUntil(
     (async () => {
       // Opening the app — leave the badge; the page will sync the real unread count.
+      // Signal every open tab too: the focused one refetches, the rest get the hint.
+      await broadcastNewMail(event.notification.data?.badge);
       const clients = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
       for (const c of clients) {
         if ("focus" in c) {
