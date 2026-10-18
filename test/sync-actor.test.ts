@@ -5,6 +5,8 @@ import { incrementalSync } from "../src/worker/sync";
 import { seedAccount, seedUser, testEnv } from "./helpers";
 import type { AccountRow } from "../src/worker/db";
 import type { Env } from "../src/worker/env";
+// Load the Worker before test deadlines, not lazily on the first Durable Object call.
+import "../src/worker/index";
 
 function workerEnv(): Env {
   return env as unknown as Env;
