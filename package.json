@@ -68,13 +68,14 @@
     "@vitest/snapshot": "^4.1.11",
     "tailwindcss": "^4.0.0",
     "typescript": "^5.6.2",
-    "vite": "^5.4.8",
+    "vite": "^7.0.0",
     "vitest": "^4.1.11",
     "wrangler": "^4.128.0"
   },
   "allowScripts": {
     "workerd@1.20260903.1": true,
     "esbuild@0.28.1": true,
+    "esbuild@0.28.2": true,
     "esbuild@0.21.5": true
   }
 }
