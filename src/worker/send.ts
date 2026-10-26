@@ -108,7 +108,7 @@ const fmt = (a: Address) => (a.name ? `${a.name.replace(/[<>"]/g, "")} <${a.emai
  * document the `Name <addr>` form, so say it the way the API asks rather than hoping its parser is
  * forgiving.
  */
-const addr = (a: Address) => (a.name ? { email: a.email, name: a.name.replace(/[<>"]/g, "") } : { email: a.email });
+const addr = (a: Address) => (a.name ? { email: a.email, name: a.name.replace(/[<>"]/g, "") } : a.email);
 
 /**
  * The headers Cloudflare will accept from us. Its allowlist is narrow and unforgiving: a header
@@ -128,7 +128,7 @@ const cfHeaders = (h: Record<string, string>): Record<string, string> =>
  */
 function cloudflareSendReason(e: unknown): string {
   const raw = (e as Error)?.message ?? String(e);
-  const code = /E_[A-Z_]+/.exec(raw)?.[0] ?? "";
+  const code = (e as { code?: string })?.code ?? /E_[A-Z_]+/.exec(raw)?.[0] ?? "";
   const said: Record<string, string> = {
     E_SENDER_DOMAIN_NOT_AVAILABLE: "that domain isn't onboarded to Cloudflare Email Sending yet",
     E_SENDER_NOT_VERIFIED: "that sending domain isn't verified with Cloudflare yet",
@@ -175,6 +175,7 @@ async function sendFromDomainMailbox(env: Env, account: AccountRow, p: SendParam
       const given = (sent as { messageId?: string } | undefined)?.messageId?.trim();
       if (given && given.includes("@")) messageId = given.startsWith("<") ? given : `<${given}>`;
     } catch (e) {
+      console.error("cloudflare_send_failed", (e as { code?: string })?.code, (e as Error)?.message);
       throw new Error(`cloudflare_send_failed: ${cloudflareSendReason(e)}`);
     }
   } else if (env.RESEND_API_KEY) {
