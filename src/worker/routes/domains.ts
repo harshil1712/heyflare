@@ -236,9 +236,6 @@ export async function deleteAccountData(db: D1Database, accountId: string, opts:
   }
   await db.batch([
     db.prepare(`DELETE FROM thread_labels WHERE thread_id IN (SELECT id FROM threads WHERE account_id = ?)`).bind(accountId),
-    db.prepare(`DELETE FROM collection_threads WHERE thread_id IN (SELECT id FROM threads WHERE account_id = ?)`).bind(accountId),
-    db.prepare(`DELETE FROM clips WHERE account_id = ?`).bind(accountId),
-    db.prepare(`DELETE FROM collections WHERE account_id = ?`).bind(accountId),
     db.prepare(`DELETE FROM labels WHERE account_id = ?`).bind(accountId),
     db.prepare(`DELETE FROM drafts WHERE account_id = ?`).bind(accountId),
     db.prepare(`DELETE FROM attachment_blobs WHERE attachment_id IN (SELECT id FROM attachments WHERE account_id = ?)`).bind(accountId),

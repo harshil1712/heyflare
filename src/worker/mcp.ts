@@ -10,27 +10,25 @@ import {
   localhostAllowedHostnames,
 } from "@modelcontextprotocol/server";
 import type { Env } from "./env";
-import { assistantTools, runTool, type ToolContext } from "./ai/tools";
+import { mailTools, runTool, type ToolContext } from "./mcp-tools";
 import { authenticateBearer, toolAllowed, type AuthTokenContext } from "./api-tokens";
-import { loadAiConfig } from "./ai/provider";
 import { VERSION } from "@shared/version";
 
-async function toolContext(env: Env, auth: AuthTokenContext): Promise<ToolContext> {
-  const cfg = await loadAiConfig(env, auth.user.id);
+function toolContext(env: Env, auth: AuthTokenContext): ToolContext {
   return {
     env,
     user: { id: auth.user.id, email: auth.user.email, name: auth.user.name },
     accounts: auth.accounts,
-    autoSend: !!cfg?.autoSend && auth.scopes === "write",
+    autoSend: false,
   };
 }
 
 /** Fresh McpServer per request so tools close over the authenticated token scope. */
 export async function createHeyflareMcpServer(env: Env, auth: AuthTokenContext): Promise<McpServer> {
   const server = new McpServer({ name: "heyflare", version: VERSION });
-  const ctx = await toolContext(env, auth);
+  const ctx = toolContext(env, auth);
 
-  for (const [name, t] of Object.entries(assistantTools(ctx))) {
+  for (const [name, t] of Object.entries(mailTools(ctx))) {
     if (!toolAllowed(auth.scopes, name)) continue;
     const description = typeof t.description === "string" ? t.description : name;
     server.registerTool(

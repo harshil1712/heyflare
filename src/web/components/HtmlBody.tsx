@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import DOMPurify from "dompurify";
-import { ChevronDown, Scissors, ShieldCheck } from "lucide-react";
+import { ChevronDown, ShieldCheck } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { textToHtml } from "../lib/format";
 import { Badge } from "@/components/ui/badge";
@@ -81,7 +81,6 @@ export function HtmlBody({
   html,
   text,
   trackers = [],
-  onClip,
   plain,
   collapseQuotes = true,
   className,
@@ -89,7 +88,6 @@ export function HtmlBody({
   html: string;
   text?: string;
   trackers?: string[];
-  onClip?: (text: string) => void;
   plain?: boolean;
   /** Hide the quoted history of the thread behind a "Show quoted text" toggle. */
   collapseQuotes?: boolean;
@@ -98,7 +96,6 @@ export function HtmlBody({
   const ref = useRef<HTMLIFrameElement>(null);
   const [height, setHeight] = useState(48);
   const [ready, setReady] = useState(false);
-  const [sel, setSel] = useState<{ text: string; x: number; y: number } | null>(null);
   const [quoted, setQuoted] = useState<{ count: number; shown: boolean }>({ count: 0, shown: false });
   const theme = useTheme();
 
@@ -148,21 +145,6 @@ export function HtmlBody({
     doc.querySelectorAll("img").forEach((img) => img.addEventListener("load", resize));
     setTimeout(resize, 300);
     setTimeout(resize, 1500);
-    if (onClip) {
-      const handler = () => {
-        const s = doc.getSelection();
-        const t = s?.toString().trim() ?? "";
-        if (!t || !s || s.rangeCount === 0) {
-          setSel(null);
-          return;
-        }
-        const rect = s.getRangeAt(0).getBoundingClientRect();
-        setSel({ text: t, x: rect.left + rect.width / 2, y: rect.top });
-      };
-      doc.addEventListener("selectionchange", handler);
-      doc.addEventListener("mouseup", handler);
-    }
-
     // Links inside the sandbox can't navigate the top frame, and the Mac webview swallows
     // window.open — so intercept the click and hand the URL to the system browser.
     doc.querySelectorAll<HTMLAnchorElement>("a[href]").forEach((a) => {
@@ -193,7 +175,7 @@ export function HtmlBody({
       openExternalUrl(href);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resize, onClip, collapseQuotes, usePlain, applyQuotes]);
+  }, [resize, collapseQuotes, usePlain, applyQuotes]);
 
   useEffect(() => {
     const onWin = () => resize();
@@ -242,21 +224,6 @@ export function HtmlBody({
         <Button variant="ghost" size="xs" className="mt-2 text-muted-foreground" onClick={toggleQuotes}>
           <ChevronDown className={cn("transition-transform", quoted.shown && "rotate-180")} />
           {quoted.shown ? "Hide quoted text" : "Show quoted text"}
-        </Button>
-      )}
-      {sel && onClip && (
-        <Button
-          size="xs"
-          className="absolute z-10 -translate-x-1/2 -translate-y-full shadow-md"
-          style={{ left: sel.x, top: Math.max(sel.y - 6, 0) + (trackers.length ? 28 : 0) }}
-          onMouseDown={(e) => e.preventDefault()}
-          onClick={() => {
-            onClip(sel.text);
-            setSel(null);
-            ref.current?.contentDocument?.getSelection()?.removeAllRanges();
-          }}
-        >
-          <Scissors /> Save clip
         </Button>
       )}
     </div>

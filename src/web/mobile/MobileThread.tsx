@@ -1,16 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { ArrowUpCircle, Bookmark, Clock, Download, FileText, FolderOpen, Forward, GitMerge, Inbox, Mail, MoreHorizontal, Paperclip, Pencil, Pin, Reply, ReplyAll, Rss, Scissors, StickyNote, Tag, Trash2, X, Layers, Sparkles } from "lucide-react";
+import { ArrowUpCircle, Bookmark, Clock, Download, FileText, Forward, GitMerge, Inbox, Mail, MoreHorizontal, Paperclip, Pencil, Pin, Reply, ReplyAll, Rss, StickyNote, Tag, Trash2, X, Layers } from "lucide-react";
 import { toast } from "sonner";
 import type { Message } from "@shared/types";
 import { cn } from "@/lib/utils";
-import { attachmentUrl, useClipMutations, useThread, useThreadAction } from "../api";
+import { attachmentUrl, useThread, useThreadAction } from "../api";
 import { useAccount } from "../context/AccountContext";
 import { useCompose } from "../context/ComposeContext";
 import { HtmlBody } from "../components/HtmlBody";
 import { fileIcon } from "../components/Composer";
 import { DateTimePicker } from "../components/DatePicker";
-import { CollectionPicker, LabelChip, LabelPicker, ThreadPicker } from "../components/Pickers";
+import { LabelChip, LabelPicker, ThreadPicker } from "../components/Pickers";
 import { bucketName } from "../components/BulkBar";
 import { Avatar, AvatarStack, AccountGlyph } from "../components/Avatar";
 import { ErrorState } from "../components/EmptyState";
@@ -24,11 +24,10 @@ import { Drawer, DrawerContent, DrawerDescription, DrawerHeader, DrawerTitle } f
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Screen } from "./Screen";
 import { ActionSheet } from "./ActionSheet";
-import { AiReplyDrawer, AiSummaryPanel, useThreadSummary } from "../components/AiReply";
 
 const BAR_H = 56;
 
-function MessageBlock({ m, expanded, onToggle, onClip }: { m: Message; expanded: boolean; onToggle: () => void; onClip: (t: string) => void }) {
+function MessageBlock({ m, expanded, onToggle }: { m: Message; expanded: boolean; onToggle: () => void }) {
   const [mounted, setMounted] = useState(expanded);
   useEffect(() => {
     if (expanded) setMounted(true);
@@ -51,7 +50,7 @@ function MessageBlock({ m, expanded, onToggle, onClip }: { m: Message; expanded:
       </button>
       {expanded && mounted && (
         <div className="pb-4">
-          <HtmlBody html={m.html_body} text={m.text_body} trackers={m.trackers} onClip={onClip} />
+          <HtmlBody html={m.html_body} text={m.text_body} trackers={m.trackers} />
           {files.length > 0 && (
             <div className="mt-4">
               <div className="text-[12px] text-muted-foreground mb-1.5 flex items-center gap-1.5">
@@ -90,7 +89,6 @@ export default function MobileThread() {
   const { openCompose } = useCompose();
   const q = useThread(id, peek);
   const act = useThreadAction(id);
-  const clips = useClipMutations();
   const t = q.data;
   const account = accountFor(t?.account_id);
 
@@ -100,7 +98,6 @@ export default function MobileThread() {
   const [rename, setRename] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [labelsOpen, setLabelsOpen] = useState(false);
-  const [collOpen, setCollOpen] = useState(false);
   const [mergeOpen, setMergeOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
@@ -119,8 +116,6 @@ export default function MobileThread() {
   const lastIncoming = useMemo(() => (t ? [...t.messages].reverse().find((m) => !m.is_from_me) ?? t.messages[t.messages.length - 1] : undefined), [t]);
   const run = (a: Parameters<typeof act.mutate>[0], msg?: string) => act.mutate(a, { onSuccess: () => msg && toast(msg), onError: (e) => toast.error((e as Error).message) });
   const reply = (mode: ReplyMode) => t && lastIncoming && openCompose(replyInitial(t, lastIncoming, mode, account?.email));
-  const [aiOpen, setAiOpen] = useState(false);
-  const summ = useThreadSummary(id ?? "");
 
   if (q.error)
     return (
@@ -173,7 +168,6 @@ export default function MobileThread() {
           {t.set_aside && <Badge variant="secondary" className="font-normal"><Bookmark />Set aside</Badge>}
           {t.bubble_up_at && <Badge variant="secondary" className="font-normal"><ArrowUpCircle />Bubbles up {fmtRelative(t.bubble_up_at)}</Badge>}
           {t.labels.map((l) => <LabelChip key={l.id} label={l} />)}
-          {t.collections.map((c) => <Badge key={c.id} variant="outline" className="font-normal"><FolderOpen />{c.name}</Badge>)}
         </div>
         {t.note && (
           <button type="button" onClick={() => setNote(t.note)} className="mt-3 w-full text-left rounded-lg bg-muted px-3 py-2.5 flex items-start gap-2">
@@ -181,24 +175,8 @@ export default function MobileThread() {
             <span className="text-[14px] leading-relaxed whitespace-pre-wrap flex-1">{t.note}</span>
           </button>
         )}
-        {t.clips.length > 0 && (
-          <div className="mt-3 flex flex-wrap gap-1.5">
-            {t.clips.map((c) => (
-              <Badge key={c.id} variant="secondary" className="max-w-full font-normal h-7 pr-1">
-                <Scissors className="text-muted-foreground" />
-                <span className="truncate max-w-56">“{c.text}”</span>
-                <button type="button" aria-label="Delete clip" className="size-6 flex items-center justify-center text-muted-foreground" onClick={() => clips.remove.mutate(c.id, { onSuccess: () => toast("Clip removed") })}>
-                  <X size={12} />
-                </button>
-              </Badge>
-            ))}
-          </div>
-        )}
       </div>
 
-      {summ.summary && <AiSummaryPanel summary={summ.summary} onClose={summ.clear} className="mx-4 mt-3" />}
-      {summ.pending && !summ.summary && <div className="mx-4 mt-3 flex items-center gap-2 text-[13px] text-muted-foreground"><Sparkles className="size-3.5" /> Summarising…</div>}
-      <AiReplyDrawer threadId={t.id} open={aiOpen} onOpenChange={setAiOpen} onResult={(r) => { if (lastIncoming) openCompose({ ...replyInitial(t, lastIncoming, "reply", account?.email), body_html: r.body_html }); }} />
 
       <div className="mt-3 divide-y divide-border">
         {t.messages.map((m) => (
@@ -214,7 +192,6 @@ export default function MobileThread() {
                 return n;
               })
             }
-            onClip={(text) => clips.create.mutate({ thread_id: t.id, message_id: m.id, text }, { onSuccess: () => toast("Clip saved") })}
           />
         ))}
       </div>
@@ -229,9 +206,6 @@ export default function MobileThread() {
         <div className="flex items-center gap-1 px-2" style={{ height: BAR_H }}>
           <Button className="h-10 rounded-full px-4 text-[15px]" onClick={() => reply("reply")}>
             <Reply /> Reply
-          </Button>
-          <Button variant="ghost" size="icon" aria-label="Reply with AI" className="size-11 text-muted-foreground" onClick={() => setAiOpen(true)}>
-            <Sparkles className="size-5!" />
           </Button>
           <span className="flex-1" />
           <Button variant="ghost" size="icon" aria-label="Reply later" className={cn("size-11 text-muted-foreground", t.reply_later && "bg-muted text-foreground")} onClick={() => run({ action: "reply_later", on: !t.reply_later }, t.reply_later ? "Removed from Reply Later" : "Added to Reply Later")}>
@@ -256,11 +230,9 @@ export default function MobileThread() {
           { icon: <ReplyAll />, label: "Reply all", onSelect: () => reply("replyAll") },
           { icon: <Forward />, label: "Forward", onSelect: () => reply("forward") },
           ...(["imbox", "feed", "paper_trail"] as const).filter((b) => b !== t.bucket).map((b) => ({ icon: bucketIcon[b], label: `Move to ${bucketName(b)}`, onSelect: () => run({ action: "move", bucket: b }, `Moved to ${bucketName(b)}`) })),
-          { icon: <Sparkles />, label: "Summarise with AI", onSelect: () => summ.run() },
           { icon: <Pencil />, label: "Rename subject", onSelect: () => setRename(t.subject) },
           { icon: <StickyNote />, label: t.note ? "Edit note" : "Stick a note on it", onSelect: () => setNote(t.note) },
           { icon: <Tag />, label: "Labels", onSelect: () => setLabelsOpen(true) },
-          { icon: <FolderOpen />, label: "Collections", onSelect: () => setCollOpen(true) },
           { icon: <GitMerge />, label: "Merge with…", onSelect: () => setMergeOpen(true) },
           ...(t.bucket === "imbox" || t.bucket === "paper_trail" ? [{ icon: <Layers />, label: t.sender_bundled ? "Unbundle sender" : "Bundle up sender", onSelect: () => run({ action: "bundle", on: !t.sender_bundled }, t.sender_bundled ? "Unbundled sender" : "Bundled up sender") }] : []),
           { icon: <Mail />, label: "Mark unread", onSelect: () => run({ action: "mark_unread" }, "Marked unread") },
@@ -327,15 +299,6 @@ export default function MobileThread() {
           <DrawerDescription className="sr-only">Toggle labels on this thread</DrawerDescription>
           <div className="p-2 max-h-[70vh] overflow-y-auto">
             <LabelPicker current={new Set(t.labels.map((l) => l.id))} onToggle={(lid, on) => run({ action: "labels", ...(on ? { add: [lid] } : { remove: [lid] }) })} onClose={() => setLabelsOpen(false)} />
-          </div>
-        </DrawerContent>
-      </Drawer>
-      <Drawer open={collOpen} onOpenChange={setCollOpen}>
-        <DrawerContent className="pb-safe">
-          <DrawerTitle className="sr-only">Collections</DrawerTitle>
-          <DrawerDescription className="sr-only">Add this thread to collections</DrawerDescription>
-          <div className="p-2 max-h-[70vh] overflow-y-auto">
-            <CollectionPicker current={new Set(t.collections.map((c) => c.id))} onToggle={(cid, on) => run({ action: "collections", ...(on ? { add: [cid] } : { remove: [cid] }) })} onClose={() => setCollOpen(false)} />
           </div>
         </DrawerContent>
       </Drawer>

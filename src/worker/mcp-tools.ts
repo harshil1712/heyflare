@@ -1,17 +1,24 @@
-// Tools the assistant can call. Every tool is scoped to the signed-in user's accounts.
-import { searchThreads } from "../fts";
+// Tools the MCP server exposes. Every tool is scoped to the token's user's accounts.
+import { searchThreads } from "./fts";
 import { tool, type ToolSet } from "ai";
 import { z } from "zod";
-import type { Env } from "../env";
-import type { AccountRow, ContactRow, ThreadRow, MessageRow } from "../db";
-import { uid, now, inClause, ownedRow, accountForThread, threadsWithLabels, attachAvatars, toContact, safeJson } from "../db";
-import { loadThreadDetail, applyAction, type ActionBody, type MailOps } from "../routes/mail";
-import { applyScreenDecision } from "../routes/screener";
-import { sendMail } from "../send";
-import { htmlToText } from "../sanitize";
-import { addMemory, deleteMemory, listMemory, type MemoryKind } from "./memory";
-import { textToHtml } from "./chat";
+import type { Env } from "./env";
+import type { AccountRow, ContactRow, ThreadRow, MessageRow } from "./db";
+import { uid, now, inClause, ownedRow, accountForThread, threadsWithLabels, attachAvatars, toContact, safeJson } from "./db";
+import { loadThreadDetail, applyAction, type ActionBody, type MailOps } from "./routes/mail";
+import { applyScreenDecision } from "./routes/screener";
+import { sendMail } from "./send";
+import { htmlToText } from "./sanitize";
 import type { Address, ThreadSummary } from "@shared/types";
+
+function textToHtml(text: string): string {
+  const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return text
+    .trim()
+    .split(/\n{2,}/)
+    .map((p) => `<p>${esc(p).replace(/\n/g, "<br>")}</p>`)
+    .join("");
+}
 
 export interface ToolContext {
   env: Env;
@@ -42,8 +49,8 @@ async function result(ctx: ToolContext, name: string, input: unknown) {
   }
 }
 
-/** AI SDK tools for Think (`getTools`) and MCP. */
-export function assistantTools(ctx: ToolContext): ToolSet {
+/** Tool definitions for the MCP server. */
+export function mailTools(ctx: ToolContext): ToolSet {
   return {
     search_mail: tool({
       description: "Full-text search across the user's mail (subjects, senders, bodies, notes). Returns thread summaries.",
@@ -101,35 +108,6 @@ export function assistantTools(ctx: ToolContext): ToolSet {
       inputSchema: z.object({}),
       execute: async (input) => result(ctx, "list_labels", input),
     }),
-    list_collections: tool({
-      description: "The user's collections (id, name, thread count).",
-      inputSchema: z.object({}),
-      execute: async (input) => result(ctx, "list_collections", input),
-    }),
-    create_collection: tool({
-      description: "Create a collection (a named bundle of related threads).",
-      inputSchema: z.object({
-        name: z.string().describe("Collection name"),
-        description: z.string().nullable().optional().describe("Optional one-line description"),
-      }),
-      execute: async (input) => result(ctx, "create_collection", input),
-    }),
-    add_to_collection: tool({
-      description: "Add a thread to a collection.",
-      inputSchema: z.object({
-        thread_id: z.string().describe("Thread id"),
-        collection_id: z.string().describe("Collection id"),
-      }),
-      execute: async (input) => result(ctx, "add_to_collection", input),
-    }),
-    save_clip: tool({
-      description: "Save a short piece of text from a thread (a code, address, sentence) to the user's Clips.",
-      inputSchema: z.object({
-        thread_id: z.string().describe("Thread id"),
-        text: z.string().describe("The exact text to clip (max 500 chars)"),
-      }),
-      execute: async (input) => result(ctx, "save_clip", input),
-    }),
     find_contact: tool({
       description: "Find people by name or email among the user's contacts and address book.",
       inputSchema: z.object({
@@ -156,24 +134,6 @@ export function assistantTools(ctx: ToolContext): ToolSet {
       description: "Send a draft. Only works when the user allowed autonomous sending; otherwise the user must press Send themselves.",
       inputSchema: z.object({ draft_id: z.string().describe("Draft id from create_draft") }),
       execute: async (input) => result(ctx, "send_draft", input),
-    }),
-    list_memory: tool({
-      description: "What you currently remember about the user (ids included).",
-      inputSchema: z.object({}),
-      execute: async (input) => result(ctx, "list_memory", input),
-    }),
-    remember: tool({
-      description: "Store a durable fact, preference, tone note, or contact note about the user. Keep it to one concise sentence.",
-      inputSchema: z.object({
-        kind: z.enum(["profile", "tone", "fact", "preference", "contact"]),
-        content: z.string().describe("One sentence"),
-      }),
-      execute: async (input) => result(ctx, "remember", input),
-    }),
-    forget: tool({
-      description: "Delete a memory entry by id.",
-      inputSchema: z.object({ id: z.string().describe("Memory id") }),
-      execute: async (input) => result(ctx, "forget", input),
     }),
   };
 }
@@ -228,7 +188,7 @@ export async function runTool(ctx: ToolContext, name: string, rawInput: unknown)
   const VISIBLE = `t.merged_into IS NULL AND (t.bubble_up_at IS NULL OR t.bubble_up_at <= ?)`;
   const ok = (data: unknown, summaryText: string) => ({ result: JSON.stringify(data), summary: summaryText });
   const fail = (msg: string) => ({ result: JSON.stringify({ error: msg }), summary: msg, isError: true });
-  if (!ids.length && !["list_memory", "remember", "forget"].includes(name)) return fail("No mail accounts are connected yet.");
+  if (!ids.length) return fail("No mail accounts are connected yet.");
 
   switch (name) {
     case "search_mail": {
@@ -380,36 +340,6 @@ export async function runTool(ctx: ToolContext, name: string, rawInput: unknown)
       const rows = await db.prepare(`SELECT id, name FROM labels WHERE account_id IN ${sc.sql} ORDER BY name`).bind(...sc.params).all<{ id: string; name: string }>();
       return ok({ labels: rows.results }, `Listed ${rows.results.length} labels`);
     }
-    case "list_collections": {
-      const rows = await db
-        .prepare(`SELECT c.id, c.name, c.description, (SELECT COUNT(*) FROM collection_threads ct WHERE ct.collection_id = c.id) AS thread_count FROM collections c WHERE c.account_id IN ${sc.sql} ORDER BY c.updated_at DESC`)
-        .bind(...sc.params)
-        .all();
-      return ok({ collections: rows.results }, `Listed ${rows.results.length} collections`);
-    }
-    case "create_collection": {
-      const nm = String(input.name ?? "").trim().slice(0, 120);
-      if (!nm) return fail("name required");
-      const id = uid();
-      await db.prepare(`INSERT INTO collections (id, account_id, name, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`).bind(id, ids[0], nm, String(input.description ?? "").slice(0, 500), t, t).run();
-      return ok({ collection_id: id, name: nm }, `Created collection “${nm}”`);
-    }
-    case "add_to_collection": {
-      const row = await ownedThreadRow(ctx, String(input.thread_id ?? ""));
-      const coll = await ownedRow<{ id: string; name: string }>(db, "collections", String(input.collection_id ?? ""), ctx.user.id);
-      if (!row || !coll) return fail("Thread or collection not found");
-      await db.prepare(`INSERT OR IGNORE INTO collection_threads (collection_id, thread_id, added_at) VALUES (?, ?, ?)`).bind(coll.id, row.id, t).run();
-      await db.prepare(`UPDATE collections SET updated_at = ? WHERE id = ?`).bind(t, coll.id).run();
-      return ok({ ok: true }, `Added “${row.custom_subject || row.subject}” to ${coll.name}`);
-    }
-    case "save_clip": {
-      const row = await ownedThreadRow(ctx, String(input.thread_id ?? ""));
-      const text = String(input.text ?? "").trim().slice(0, 500);
-      if (!row || !text) return fail("Thread not found or empty text");
-      const id = uid();
-      await db.prepare(`INSERT INTO clips (id, account_id, thread_id, message_id, text, created_at) VALUES (?, ?, ?, NULL, ?, ?)`).bind(id, row.account_id, row.id, text, t).run();
-      return ok({ clip_id: id }, `Clipped “${text.slice(0, 40)}${text.length > 40 ? "…" : ""}”`);
-    }
     case "find_contact": {
       const q = String(input.query ?? "").trim();
       const limit = Math.min(20, Math.max(1, Number(input.limit) || 8));
@@ -494,21 +424,6 @@ export async function runTool(ctx: ToolContext, name: string, rawInput: unknown)
       const r = await sendMail(ctx.env, acc, { thread_id: row.thread_id, reply_to_message_id: row.reply_to_message_id, to: safeJson(row.to_json, []), cc: safeJson(row.cc_json, []), bcc: safeJson(row.bcc_json, []), subject: row.subject, body_html: row.body_html });
       await db.prepare(`DELETE FROM drafts WHERE id = ?`).bind(id).run();
       return ok({ ok: true, thread_id: r.thread_id }, `Sent “${row.subject}”`);
-    }
-    case "list_memory": {
-      const rows = await listMemory(ctx.env, ctx.user.id);
-      return ok({ memory: rows.map((r) => ({ id: r.id, kind: r.kind, content: r.content, source: r.source })) }, `Recalled ${rows.length} memory entries`);
-    }
-    case "remember": {
-      const kind = String(input.kind ?? "fact") as MemoryKind;
-      const content = String(input.content ?? "").trim();
-      if (!content) return fail("content required");
-      const row = await addMemory(ctx.env, ctx.user.id, kind, content, "assistant");
-      return ok({ id: row.id }, `Remembered: ${content.slice(0, 60)}${content.length > 60 ? "…" : ""}`);
-    }
-    case "forget": {
-      const done = await deleteMemory(ctx.env, ctx.user.id, String(input.id ?? ""));
-      return done ? ok({ ok: true }, "Forgot that") : fail("Memory entry not found");
     }
     default:
       return fail(`Unknown tool ${name}`);

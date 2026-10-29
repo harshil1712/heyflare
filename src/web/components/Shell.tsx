@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, Navigate, Outlet, useLocation, useNavigate } from "react-router-dom";
-import { ArrowUpCircle, BookOpen, Bookmark, CalendarClock, CalendarDays, Repeat, Check, ChevronDown, ChevronRight, Clock, Eye, FileText, Files, FolderOpen, Inbox, Keyboard, Layers, LogOut, Mail, Monitor, Moon, PenSquare, Plus, Rss, Scissors, Search, Send, Settings, Shield, ShieldOff, Sun, Tag, Trash2, Users, Sparkles } from "lucide-react";
+import { ArrowUpCircle, Bookmark, CalendarClock, Check, ChevronDown, ChevronRight, Clock, Eye, FileText, Files, Inbox, Keyboard, Layers, LogOut, Mail, Monitor, Moon, PenSquare, Plus, Rss, Search, Send, Settings, Shield, ShieldOff, Sun, Tag, Trash2, Users } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import { Mark } from "./Logo";
@@ -13,8 +13,6 @@ import { useKeys } from "../lib/keys";
 import { arrows, focus, overlayOpen, useFocusRegion } from "../lib/focusStore";
 import { Avatar } from "./Avatar";
 import { CommandPalette } from "./CommandPalette";
-import { AssistantPanel } from "./AssistantPanel";
-import { assistant, useAssistant } from "../lib/assistantStore";
 import { ShortcutsOverlay } from "./ShortcutsOverlay";
 import { UpdateDialog } from "./UpdateDialog";
 import { useUpdateCheck } from "../lib/update";
@@ -36,9 +34,9 @@ interface NavItem {
 
 const TITLES: [string, string][] = [
   ["/feed", "The Feed"], ["/paper-trail", "Paper Trail"], ["/power-through", "Power through new"], ["/screener", "Screener"], ["/screened-out", "Screened out"], ["/reply-later", "Reply Later"],
-  ["/set-aside", "Set Aside"], ["/bubble-up", "Bubble Up"], ["/previously-seen", "Previously Seen"], ["/contacts", "Contacts"], ["/clips", "Clips"],
-  ["/collections", "Collections"], ["/files", "Files"], ["/labels", "Labels"], ["/sent", "Sent"], ["/drafts", "Drafts"], ["/scheduled", "Scheduled"],
-  ["/everything", "Everything"], ["/trash", "Trash"], ["/settings", "Settings"], ["/search", "Search"], ["/compose", "New message"], ["/t/", "Thread"], ["/bundle/", "Bundle"], ["/assistant", "Assistant"], ["/calendar", "Calendar"], ["/journal", "Journal"], ["/habits", "Habits"],
+  ["/set-aside", "Set Aside"], ["/bubble-up", "Bubble Up"], ["/previously-seen", "Previously Seen"], ["/contacts", "Contacts"],
+  ["/files", "Files"], ["/labels", "Labels"], ["/sent", "Sent"], ["/drafts", "Drafts"], ["/scheduled", "Scheduled"],
+  ["/everything", "Everything"], ["/trash", "Trash"], ["/settings", "Settings"], ["/search", "Search"], ["/compose", "New message"], ["/t/", "Thread"], ["/bundle/", "Bundle"],
 ];
 function pageTitle(path: string): string {
   if (path === "/") return "Imbox";
@@ -58,9 +56,6 @@ export function Shell() {
   const { user, loading, error } = useAccount();
   const loc = useLocation();
   const [open, setOpen] = useState<boolean>(readOpen);
-  const fullHeight = loc.pathname.startsWith("/calendar");
-  const aState = useAssistant();
-  const docked = aState.open && aState.mode === "dock";
   if (loading) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center gap-4 text-muted-foreground text-sm">
@@ -84,17 +79,13 @@ export function Shell() {
         }}
       >
         <AppSidebar />
-        <SidebarInset className={cn("min-w-0 transition-[padding] duration-150", fullHeight && "h-svh overflow-hidden")} style={{ paddingRight: docked ? aState.width : undefined }}>
+        <SidebarInset className="min-w-0">
           <TopBar />
-          {/* The calendar is a full-height app view that scrolls inside itself, so it gets the
-              viewport exactly and no tall bottom padding — otherwise the page scrolls too and the
-              toolbar drifts away under you. Every other page wants the room to grow. */}
-          <main className={cn("w-full px-4 sm:px-8 pt-4", fullHeight ? "min-h-0 flex-1 overflow-hidden pb-3" : "flex-1 pb-24")}>
+          <main className="w-full px-4 sm:px-8 pt-4 flex-1 pb-24">
             <Outlet />
           </main>
         </SidebarInset>
         <Overlays />
-        <AssistantPanel />
       </SidebarProvider>
   );
 }
@@ -145,17 +136,12 @@ function Overlays() {
     s: () => setOverlay({ palette: true }),
     "?": () => setOverlay({ help: true }),
     i: () => nav("/"),
-    "0": () => nav(location.pathname.startsWith("/calendar") ? "/" : "/calendar"),
   });
   useEffect(() => {
     const fn = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
         setOverlay({ palette: !overlayState.palette });
-      }
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "j") {
-        e.preventDefault();
-        assistant.toggle();
       }
     };
     window.addEventListener("keydown", fn);
@@ -170,7 +156,6 @@ function Overlays() {
       switch (id) {
         case "compose": return openCompose();
         case "palette": return setOverlay({ palette: true });
-        case "assistant": return assistant.toggle();
         case "check-updates": return setOverlay({ update: true });
         case "toggle-sidebar": return window.dispatchEvent(new KeyboardEvent("keydown", { key: "b", metaKey: true, bubbles: true }));
         case "back": return history.back();
@@ -186,7 +171,7 @@ function Overlays() {
 
   return (
     <>
-      <CommandPalette open={palette} onClose={() => setOverlay({ palette: false })} onCompose={() => openCompose()} onToggleTheme={toggleTheme} onShortcuts={() => setOverlay({ help: true })} onAssistant={() => assistant.open()} theme={theme} hasAccount={!!account || accounts.length > 0} />
+      <CommandPalette open={palette} onClose={() => setOverlay({ palette: false })} onCompose={() => openCompose()} onToggleTheme={toggleTheme} onShortcuts={() => setOverlay({ help: true })} theme={theme} hasAccount={!!account || accounts.length > 0} />
       <ShortcutsOverlay open={help} onClose={() => setOverlay({ help: false })} />
       <UpdateDialog open={update} onClose={() => setOverlay({ update: false })} info={updateInfo} />
     </>
@@ -269,7 +254,6 @@ function AppSidebar() {
     { to: "/feed", label: "The Feed", icon: <Rss />, count: c?.feed_new },
     { to: "/paper-trail", label: "Paper Trail", icon: <FileText />, count: c?.paper_trail_new },
     { to: "/screener", label: "Screener", icon: <Shield />, count: c?.screener },
-    { to: "/calendar", label: "Calendar", icon: <CalendarDays />, kbd: "0" },
   ];
   const trays: NavItem[] = [
     { to: "/reply-later", label: "Reply Later", icon: <Clock />, count: c?.reply_later },
@@ -279,15 +263,11 @@ function AppSidebar() {
   const library: NavItem[] = [
     { to: "/previously-seen", label: "Previously Seen", icon: <Eye /> },
     { to: "/contacts", label: "Contacts", icon: <Users /> },
-    { to: "/clips", label: "Clips", icon: <Scissors /> },
-    { to: "/collections", label: "Collections", icon: <FolderOpen /> },
     { to: "/files", label: "Files", icon: <Files /> },
     { to: "/labels", label: "Labels", icon: <Tag /> },
     { to: "/drafts", label: "Drafts", icon: <PenSquare /> },
   ];
   const more: NavItem[] = [
-    { to: "/journal", label: "Journal", icon: <BookOpen /> },
-    { to: "/habits", label: "Habits", icon: <Repeat /> },
     { to: "/sent", label: "Sent", icon: <Send /> },
     { to: "/scheduled", label: "Scheduled", icon: <CalendarClock /> },
     { to: "/everything", label: "Everything", icon: <Mail /> },
@@ -297,9 +277,8 @@ function AppSidebar() {
   const isActive = (n: NavItem) => (n.end ? loc.pathname === n.to : loc.pathname.startsWith(n.to));
   const moreExpanded = moreOpen || more.some(isActive);
 
-  /* ---- arrow-key focus: sidebar │ content │ assistant ---- */
+  /* ---- arrow-key focus: sidebar │ content ---- */
   const region = useFocusRegion();
-  const assistantState = useAssistant();
   const [focusIdx, setFocusIdx] = useState(0);
   const flatNav = useMemo(
     () => [...primary, ...trays, ...library, ...(moreExpanded ? more : [])],
@@ -308,8 +287,7 @@ function AppSidebar() {
   );
   const activate = useCallback(
     (n: NavItem) => {
-      if (n.to === "/assistant") assistant.open();
-      else nav(n.to);
+      nav(n.to);
       focus.toContent();
     },
     [nav],
@@ -330,12 +308,6 @@ function AppSidebar() {
   useKeys({
     ArrowLeft: () => {
       if (!arrowsOk()) return;
-      // Mirror of ArrowRight: leaving the assistant closes it, then content steps into the sidebar.
-      if (assistantState.open && region !== "sidebar") {
-        assistant.close();
-        focus.toContent();
-        return;
-      }
       if (region === "content") focus.toSidebar();
     },
     ArrowRight: () => {
@@ -343,16 +315,6 @@ function AppSidebar() {
       if (region === "sidebar") {
         const n = flatNav[focusIdx];
         if (n) activate(n);
-      } else {
-        assistant.open();
-        // The panel mounts a tick later; keep trying briefly, then give up quietly.
-        let tries = 0;
-        const focusInput = () => {
-          const el = document.querySelector<HTMLTextAreaElement>("[data-assistant-input]");
-          if (el && !el.disabled) return el.focus();
-          if (tries++ < 12) window.setTimeout(focusInput, 50);
-        };
-        window.setTimeout(focusInput, 30);
       }
     },
     ArrowDown: () => {
@@ -391,10 +353,6 @@ function AppSidebar() {
           to={n.to}
           onClick={(e) => {
             focus.toContent();
-            if (n.to === "/assistant") {
-              e.preventDefault();
-              assistant.open();
-            }
           }}
         >
           {n.icon}

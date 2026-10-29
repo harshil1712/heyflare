@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { runTool, type ToolContext } from "../src/worker/ai/tools";
+import { runTool, type ToolContext } from "../src/worker/mcp-tools";
 import { ingestParsed } from "../src/worker/sync";
 import { addr, makeParsed, seedAccount, seedUser, testEnv } from "./helpers";
 
@@ -9,11 +9,10 @@ function ctx(user: { id: string; email: string; name: string }, accounts: ToolCo
     user,
     accounts,
     autoSend,
-    emit: () => {},
   };
 }
 
-describe("AI tools money path", () => {
+describe("mail tools money path", () => {
   it("search_mail → read_thread → create_draft → send_draft blocked without autoSend", async () => {
     const env = testEnv();
     const user = await seedUser({ email: "owner@example.com" });

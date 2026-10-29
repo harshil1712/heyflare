@@ -1,18 +1,16 @@
 import { Link, useLocation } from "react-router-dom";
-import { CalendarDays, Inbox, Menu, Rss, Shield } from "lucide-react";
+import { FileText, Inbox, Menu, Rss, Shield } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAccount } from "../context/AccountContext";
 import { useCounts } from "../api";
 
 /**
- * Five slots, and no more: a sixth would put every label under 54px on a small phone. Calendar
- * takes the slot Paper Trail had — the Paper Trail is an archive you go looking for, the calendar
- * is a surface you glance at daily — and Paper Trail moves to More, one tap away.
+ * Five slots, and no more: a sixth would put every label under 54px on a small phone.
  */
 const TABS = [
   { to: "/", label: "Imbox", icon: Inbox, end: true },
   { to: "/feed", label: "Feed", icon: Rss },
-  { to: "/calendar", label: "Calendar", icon: CalendarDays },
+  { to: "/paper-trail", label: "Paper Trail", icon: FileText },
   { to: "/screener", label: "Screener", icon: Shield },
   { to: "/more", label: "More", icon: Menu },
 ];

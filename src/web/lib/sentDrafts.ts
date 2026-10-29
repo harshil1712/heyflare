@@ -1,7 +1,7 @@
 /**
- * Draft ids that have been sent in this session, wherever the send came from (the assistant's
- * own tool, a draft card, or the composer opened from one). Assistant draft cards watch this so a
- * card can't sit there offering to send mail that already went out.
+ * Draft ids that have been sent in this session, wherever the send came from (a draft card or
+ * the composer opened from one). Draft cards watch this so one can't offer to send mail that
+ * already went out.
  */
 const sent = new Map<string, string | undefined>(); // draft_id -> thread_id
 const listeners = new Set<() => void>();

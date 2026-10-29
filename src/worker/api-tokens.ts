@@ -24,7 +24,6 @@ export const MCP_READ_TOOLS = new Set([
   "read_thread",
   "list_screener",
   "find_contact",
-  "list_memory",
 ]);
 
 async function sha256Hex(s: string): Promise<string> {

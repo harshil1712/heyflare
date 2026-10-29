@@ -2,22 +2,9 @@
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/doable-team/heyflare) [![License: MIT](https://img.shields.io/badge/license-MIT-black)](LICENSE)
 
-A self-hosted, HEY-style email client that runs entirely on Cloudflare — **with a built-in AI agent** that reads, triages and
-drafts for you. Connect Gmail accounts and mailboxes on your own domains, screen first-time senders, read a calm, unified Imbox, and keep a
-HEY-style calendar next to it. Single owner, minimal black-and-white UI, tailor-made
+A self-hosted, HEY-style email client that runs entirely on Cloudflare. Connect Gmail accounts and mailboxes on your own
+domains, screen first-time senders, and read a calm, unified Imbox. Single owner, minimal black-and-white UI, tailor-made
 mobile app UI, no external services beyond Google's APIs and Cloudflare.
-
-## Built-in AI agent
-
-heyflare ships with an **agent inside the product** — not a CLI bolted on the side. Open it from the sidebar or with `⌘J`; it
-lives in a resizable side panel and can see the thread you're reading.
-
-- **Talk to your mail.** "What's new for me today?", "Anything waiting in the Screener?", "Find the invoice from Stripe", "Summarise this thread".
-- **Acts, with tools.** Search and read threads, screen senders in or out, move to Imbox / Feed / Paper Trail, Reply Later, Set Aside, Bubble Up, labels, collections, clips, bundles, contacts.
-- **Writes, you decide.** It drafts replies and forwards; you press Send. (You can allow autonomous sending if you want it.)
-- **Reply with AI** on any thread: type what you want to say, pick a tone, and the reply opens in the composer prefilled after the agent reads the whole thread.
-- **Memory that learns.** It studies the mail you send to learn your tone (greetings, sign-offs, length, phrasing), facts about you, preferences and per-contact notes — a compact set you can read, edit or wipe in Settings → AI. Reply drafts use it.
-- **Bring your own model.** Anthropic, OpenAI, xAI (Grok), OpenRouter, Google Gemini, or any OpenAI-compatible endpoint (Ollama, Groq, Mistral, LM Studio…). Keys are stored encrypted on your Worker; mail is sent to the provider only when you use an AI feature.
 
 ## Screenshots
 
@@ -25,9 +12,9 @@ lives in a resizable side panel and can see the thread you're reading.
 |---|---|
 | ![Imbox](docs/screenshots/imbox-v2.png) | ![Screener](docs/screenshots/screener-v2.png) |
 
-| Thread with the AI assistant | The Feed |
+| Thread | The Feed |
 |---|---|
-| ![Assistant](docs/screenshots/assistant-v2.png) | ![Feed](docs/screenshots/feed-v2.png) |
+| ![Thread](docs/screenshots/thread-v2.png) | ![Feed](docs/screenshots/feed-v2.png) |
 
 | Paper Trail | Mobile |
 |---|---|
@@ -41,15 +28,10 @@ lives in a resizable side panel and can see the thread you're reading.
 - **Power through new** — the whole "New for you" queue stacked on one page: reply, defer or file each one, `o` to start.
 - **Reply Later, Set Aside, Bubble Up** — trays docked in the Imbox, Focus & Reply mode, snooze with presets.
 - **Bundles** — collapse a chatty sender into one row per batch; read the batch like a feed.
-- **Calendar** — weeks that scroll continuously, HEY-style, each day a list of chips rather than an hour grid, with a
-  fitted single-day timeline beside it; plus month, year and agenda views.
-  Google Calendar over OAuth (two-way), subscribed `.ics`/`webcal` feeds (read-only), `.ics` import, and heyflare's own
-  calendars. Habits, a journal, day labels and cover art, "sometime this week" tasks, countdowns, time tracking, and the
-  next three days shown at the top of the Imbox. `0` flips between mail and calendar.
 - **Unified inbox** across every connected account, with per-account glyphs and a From picker in compose.
 - **Gmail** via OAuth (incremental history sync every minute plus sync-on-focus; sending through Gmail).
 - **Custom domain mailboxes** — inbound through Cloudflare Email Routing, outbound through Cloudflare Email Sending or Resend.
-- Contacts with Google profile photos, BIMI brand logos, address-book autocomplete, clips, collections, labels, files,
+- Contacts with Google profile photos, BIMI brand logos, address-book autocomplete, labels, files,
   notes, merge and rename threads, spy-pixel blocking, keyboard shortcuts, command palette, dark mode, two-factor auth.
 
 ## Stack
@@ -84,11 +66,10 @@ Prerequisites: a Cloudflare account, Node 24 LTS with npm 11, and a Google Cloud
 
 ### 1. Google OAuth client
 1. https://console.cloud.google.com → create a project.
-2. **APIs & Services → Library**: enable **Gmail API**, **People API** and, for the calendar, **Google Calendar API**.
+2. **APIs & Services → Library**: enable **Gmail API** and **People API**.
 3. **OAuth consent screen**: External; add your Gmail addresses as test users (publish the app later to lift the 7-day
    refresh-token limit for test users). Scopes: `gmail.modify`, `contacts.other.readonly`, `contacts.readonly`,
-   `directory.readonly`, `openid`, `email`, `profile`. Add `https://www.googleapis.com/auth/calendar` if you want the
-   calendar — heyflare asks for it separately, from Settings → Calendar, so connecting mail alone never touches it.
+   `directory.readonly`, `openid`, `email`, `profile`.
 4. **Credentials → OAuth client ID → Web application**:
    - Authorized JavaScript origins: `https://YOUR_HOST`
    - Authorized redirect URIs: `https://YOUR_HOST/auth/google/callback` and `http://localhost:8787/auth/google/callback`
@@ -129,7 +110,7 @@ dialog explains what changed and how to get it.
 - **Cloned repo** — `git pull && npm run deploy`
 - **Fork + Workers Builds** — merge upstream and push; Cloudflare deploys it.
 
-Your data is never touched: mail, contacts, screener decisions, settings, 2FA and AI memory live in your D1 database, and
+Your data is never touched: mail, contacts, screener decisions, settings and 2FA live in your D1 database, and
 new database migrations apply themselves on the first request after a deploy. Full details, including rollback:
 [`docs/UPDATING.md`](docs/UPDATING.md).
 
@@ -196,7 +177,7 @@ Primary mail ingest is **Gmail `users.watch` → Cloud Pub/Sub → `POST /pubsub
 
 ### MCP (agent access)
 
-This fork exposes mail tools over **stateless Streamable HTTP MCP** at `/mcp` (MCP SDK v2 / `2026-07-28`, with the SDK’s built-in 2025 legacy fallback). Auth is bearer API tokens (Settings → Security) — not session cookies. Default tokens are **read-only** (`search_mail`, `list_threads`, `read_thread`, `list_screener`, `find_contact`, `list_memory`); mint with write scope for mutating tools. Upstream tracking from here is selective cherry-pick.
+This fork exposes mail tools over **stateless Streamable HTTP MCP** at `/mcp` (MCP SDK v2 / `2026-07-28`, with the SDK’s built-in 2025 legacy fallback). Auth is bearer API tokens (Settings → Security) — not session cookies. Default tokens are **read-only** (`search_mail`, `list_threads`, `read_thread`, `list_screener`, `find_contact`); mint with write scope for mutating tools. Upstream tracking from here is selective cherry-pick.
 
 Connect clients to `https://YOUR_HOST/mcp` with `Authorization: Bearer hf_…`. Modern clients may send `MCP-Protocol-Version` / `Mcp-Method` headers; older Streamable HTTP clients still work via the dual-era handler.
 
@@ -232,25 +213,7 @@ TOTP (Google Authenticator, 1Password, Authy…) with 10 single-use recovery cod
 ## Docs
 - `API.md` — the worker/web API contract.
 - `DESIGN.md` — the design system (Notion-minimal, shadcn, mobile spec).
-- [`docs/CALENDAR.md`](docs/CALENDAR.md) — how the calendar is put together: sources, views, schema, API, sync.
 - [`docs/UPDATING.md`](docs/UPDATING.md) — what an update changes, how to update, how to roll back.
 
 ## License
 MIT © Doable Team
-
-## AI assistant
-heyflare has an in-product assistant (sidebar → Assistant, ⌘J) that can search and read your mail, screen senders, organise
-threads (Reply Later, Set Aside, Bubble Up, move, labels, collections, clips, bundles), look up contacts, and write drafts in
-your voice. It follows HEY's principle: **the agent writes, you decide** — drafts are never sent unless you press Send (or
-explicitly allow autonomous sending in Settings → AI). Thread pages get **Reply with AI** (one-line brief → a full reply drafted
-into the composer, using your tone) and **Summarise with AI**.
-
-**Default provider**: Cloudflare **Workers AI** via the `AI` binding and [`workers-ai-provider`](https://www.npmjs.com/package/workers-ai-provider)
-(`createWorkersAI({ binding: env.AI })`), default model `@cf/zai-org/glm-5.3`. No API key required when the binding is present.
-Optional BYOK presets (Anthropic, OpenAI, xAI, OpenRouter, Gemini, custom OpenAI-compatible) remain under Settings → AI.
-
-**Memory**: the assistant keeps a small, editable memory of who you are, how you write (greetings, sign-offs, length), your
-preferences, and notes on people. It learns from the mail you send (at most twice a day, can be turned off), from what it does
-for you, and from notes you add. Everything is visible and editable in Settings → AI → Memory, and can be wiped.
-
-**Privacy**: mail is sent to the configured provider for assistant features (chat, reply, summarise, or background learning). Separately, enabled custom-domain spam screening sends bounded email content to Cloudflare Workers AI on arrival; see the controls above.

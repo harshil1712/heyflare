@@ -1,8 +1,8 @@
 import { useState } from "react";
-import { Check, FolderOpen, Plus } from "lucide-react";
+import { Check, Plus } from "lucide-react";
 import type { Label, ThreadSummary } from "@shared/types";
 import { cn } from "@/lib/utils";
-import { useCollectionMutations, useCollections, useLabelMutations, useLabels, useSearch } from "../api";
+import { useLabelMutations, useLabels, useSearch } from "../api";
 import { fmtTime } from "../lib/format";
 import { Avatar } from "./Avatar";
 import { Badge } from "@/components/ui/badge";
@@ -23,7 +23,7 @@ export function LabelChip({ label, small }: { label: Label; small?: boolean }) {
   );
 }
 
-/** Command-style toggle list with an inline "Create" row. Shared by labels and collections. */
+/** Command-style toggle list with an inline "Create" row. */
 function TogglePicker({
   placeholder,
   items,
@@ -113,26 +113,6 @@ export function LabelPicker({ current, onToggle, onClose }: { current: Set<strin
   );
 }
 
-export function CollectionPicker({ current, onToggle, onClose }: { current: Set<string>; onToggle: (id: string, on: boolean) => void; onClose?: () => void }) {
-  const cols = useCollections();
-  const { create } = useCollectionMutations();
-  const list = cols.data ?? [];
-  return (
-    <TogglePicker
-      placeholder="Collection…"
-      items={list.map((c) => ({ id: c.id, name: c.name }))}
-      current={current}
-      loading={cols.isLoading}
-      creating={create.isPending}
-      onToggle={onToggle}
-      onCreate={(n) => create.mutate({ name: n }, { onSuccess: (c) => onToggle(c.id, true) })}
-      onClose={onClose}
-      icon={<FolderOpen className="text-muted-foreground" />}
-      emptyText="No collections yet. Type to start one."
-    />
-  );
-}
-
 /** Checkbox items for use inside a DropdownMenuSubContent. */
 export function LabelMenuItems({ current, onToggle, onManage }: { current: Set<string>; onToggle: (id: string, on: boolean) => void; onManage?: () => void }) {
   const labels = useLabels();
@@ -150,27 +130,6 @@ export function LabelMenuItems({ current, onToggle, onManage }: { current: Set<s
         <>
           <DropdownMenuSeparator />
           <DropdownMenuItem onSelect={onManage}><Plus /> New label…</DropdownMenuItem>
-        </>
-      )}
-    </>
-  );
-}
-
-export function CollectionMenuItems({ current, onToggle, onManage }: { current: Set<string>; onToggle: (id: string, on: boolean) => void; onManage?: () => void }) {
-  const cols = useCollections();
-  const list = cols.data ?? [];
-  return (
-    <>
-      {list.length === 0 && <DropdownMenuItem disabled>No collections yet</DropdownMenuItem>}
-      {list.map((c) => (
-        <DropdownMenuCheckboxItem key={c.id} checked={current.has(c.id)} onCheckedChange={(on) => onToggle(c.id, !!on)} onSelect={(e) => e.preventDefault()}>
-          {c.name}
-        </DropdownMenuCheckboxItem>
-      ))}
-      {onManage && (
-        <>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem onSelect={onManage}><Plus /> New collection…</DropdownMenuItem>
         </>
       )}
     </>

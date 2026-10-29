@@ -134,7 +134,6 @@ export async function deleteThreadsCascade(env: Env, threadIds: string[]): Promi
 
   await db.batch([
     db.prepare(`DELETE FROM thread_labels WHERE thread_id IN (${ph})`).bind(...threadIds),
-    db.prepare(`DELETE FROM collection_threads WHERE thread_id IN (${ph})`).bind(...threadIds),
     db.prepare(`DELETE FROM attachment_blobs WHERE attachment_id IN (SELECT id FROM attachments WHERE thread_id IN (${ph}))`).bind(...threadIds),
     db.prepare(`DELETE FROM attachments WHERE thread_id IN (${ph})`).bind(...threadIds),
     db.prepare(`DELETE FROM messages WHERE thread_id IN (${ph})`).bind(...threadIds),

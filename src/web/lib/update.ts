@@ -169,7 +169,7 @@ export function useUpdateCheck(): UpdateInfo & { dismiss: () => void } {
 function busy(): boolean {
   const el = document.activeElement as HTMLElement | null;
   if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) return true;
-  return !!document.querySelector('[role="dialog"],[role="alertdialog"],[data-slot="sheet-content"],[data-assistant-streaming="1"]');
+  return !!document.querySelector('[role="dialog"],[role="alertdialog"],[data-slot="sheet-content"]');
 }
 
 /**

@@ -4,11 +4,11 @@ import { Kbd } from "@/components/ui/kbd";
 const GROUPS: { title: string; keys: [string, string][] }[] = [
   {
     title: "Moving around",
-    keys: [["↑ / ↓", "Move through mail"], ["←", "Jump to the sidebar"], ["→", "Open the Assistant"], ["↵", "Open (sidebar: go there)"], ["esc", "Back to the list"]],
+    keys: [["↑ / ↓", "Move through mail"], ["←", "Jump to the sidebar"], ["↵", "Open (sidebar: go there)"], ["esc", "Back to the list"]],
   },
   {
     title: "Go to",
-    keys: [["⌘K", "Search & commands"], ["⌘B", "Toggle sidebar"], ["⌘J", "Assistant (open / close)"]],
+    keys: [["⌘K", "Search & commands"], ["⌘B", "Toggle sidebar"]],
   },
   {
     title: "Lists",
@@ -17,10 +17,6 @@ const GROUPS: { title: string; keys: [string, string][] }[] = [
   {
     title: "Power through new",
     keys: [["o", "Start (from the Imbox)"], ["j / k", "Next / previous"], ["r", "Reply inline"], ["l", "Reply later"], ["a", "Set aside"], ["e", "Mark seen"], ["#", "Trash"], ["↵", "Open the full thread"], ["esc", "Back to the Imbox"]],
-  },
-  {
-    title: "Calendar",
-    keys: [["0", "Mail ⇄ Calendar"], ["↑ / ↓", "Previous / next"], ["←", "Jump to the sidebar"], ["→", "Open the Assistant"], ["t", "Today"], ["d / w / y", "Day, week, year"], ["n", "New event"], ["j", "Journal"], ["b", "Habits"]],
   },
   {
     title: "Everywhere",

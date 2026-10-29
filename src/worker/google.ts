@@ -4,8 +4,6 @@ import { now } from "./db";
 
 const GMAIL_BASE = "https://gmail.googleapis.com/gmail/v1/users/me/";
 const BATCH_URL = "https://www.googleapis.com/batch/gmail/v1";
-/** Granted on every connect. Calendar is asked for separately so mail-only users aren't scared off. */
-export const CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar";
 /** The one scope that decides whether an account can sync mail at all. */
 export const MAIL_SCOPE = "https://www.googleapis.com/auth/gmail.modify";
 /** Enough to identify who just signed in, and nothing more. */
@@ -17,19 +15,6 @@ const SCOPES = [
   "https://www.googleapis.com/auth/directory.readonly",
   ...IDENTITY_SCOPES,
 ];
-
-/**
- * What a connect is asking Google for.
- * - `mail` — mail, contacts and identity; the calendar is left alone.
- * - `mail+calendar` — the same, plus Google Calendar.
- * - `calendar` — Google Calendar and identity only. No mail access whatsoever.
- */
-export type GoogleScopeMode = "mail" | "mail+calendar" | "calendar";
-
-function scopesFor(mode: GoogleScopeMode): string[] {
-  if (mode === "calendar") return [...IDENTITY_SCOPES, CALENDAR_SCOPE];
-  return mode === "mail+calendar" ? [...SCOPES, CALENDAR_SCOPE] : SCOPES;
-}
 
 export class GmailError extends Error {
   status: number;
@@ -43,11 +28,6 @@ export class GmailError extends Error {
 
 export function googleConfigured(env: Env): boolean {
   return !!(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET);
-}
-
-/** True when this account's refresh token already carries the Calendar scope. */
-export function hasCalendarScope(scopes: string | null | undefined): boolean {
-  return (scopes ?? "").split(/\s+/).includes(CALENDAR_SCOPE);
 }
 
 /**
@@ -66,12 +46,12 @@ export function hasMailScope(scopes: string | null | undefined): boolean {
  */
 export const MAIL_SCOPE_SQL = `(scopes IS NULL OR scopes = '' OR scopes LIKE '%gmail.modify%')`;
 
-export function googleAuthUrl(env: Env, state: string, redirectUri: string, loginHint?: string, mode: GoogleScopeMode = "mail"): string {
+export function googleAuthUrl(env: Env, state: string, redirectUri: string, loginHint?: string): string {
   const u = new URL("https://accounts.google.com/o/oauth2/v2/auth");
   u.searchParams.set("client_id", env.GOOGLE_CLIENT_ID!);
   u.searchParams.set("redirect_uri", redirectUri);
   u.searchParams.set("response_type", "code");
-  u.searchParams.set("scope", scopesFor(mode).join(" "));
+  u.searchParams.set("scope", SCOPES.join(" "));
   u.searchParams.set("access_type", "offline");
   u.searchParams.set("prompt", "consent");
   u.searchParams.set("include_granted_scopes", "true");

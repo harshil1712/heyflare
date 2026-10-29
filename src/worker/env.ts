@@ -18,12 +18,10 @@ export interface Env {
   RESEND_API_KEY?: string;
   /** Cloudflare Email Sending binding (`send_email`), when enabled on the account. */
   EMAIL?: { send(msg: any): Promise<any> };
-  /** Workers AI binding — spam triage + assistant (via workers-ai-provider). */
+  /** Workers AI binding — spam triage (Clef). */
   AI?: Ai;
   /** Per-account sync coordinator (Phase 2). */
   SYNC_ACTOR?: DurableObjectNamespace<import("./sync-actor").SyncActor>;
-  /** Think-based email assistant (one DO instance per conversation). */
-  AssistantAgent?: DurableObjectNamespace<import("./ai/assistant-agent").AssistantAgent>;
   /** Shared secret for Pub/Sub push verification (`?token=` or Bearer). */
   PUBSUB_VERIFICATION_TOKEN?: string;
   /** Gmail users.watch topic, e.g. `projects/my-proj/topics/heyflare-mail`. */
@@ -44,7 +42,7 @@ export type Variables = {
   account: AccountRow | null;
   /** Account ids in scope for list/count queries: `[id]` for a specific account, all of the user's ids for unified scope. */
   accountIds: string[];
-  /** Every account id the user owns, regardless of the requested scope (ownership checks for cross-account labels/collections). */
+  /** Every account id the user owns, regardless of the requested scope (ownership checks for cross-account labels). */
   allAccountIds: string[];
 };
 

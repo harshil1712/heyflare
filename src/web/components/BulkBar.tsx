@@ -1,11 +1,11 @@
 import { useState } from "react";
-import { ArrowUpCircle, Bookmark, Clock, FolderPlus, GitMerge, Mail, MailOpen, MoveRight, Tag, Trash2, X, Inbox, Rss, FileText, Loader2 } from "lucide-react";
+import { ArrowUpCircle, Bookmark, Clock, GitMerge, Mail, MailOpen, MoveRight, Tag, Trash2, X, Inbox, Rss, FileText, Loader2 } from "lucide-react";
 import type { Bucket, ThreadSummary } from "@shared/types";
 import { useQueryClient } from "@tanstack/react-query";
 import { api, invalidateMail, useBulkAction, type ThreadAction } from "../api";
 import { useToast } from "./Toast";
 import { DateTimePicker } from "./DatePicker";
-import { CollectionPicker, LabelPicker } from "./Pickers";
+import { LabelPicker } from "./Pickers";
 import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
 import { Separator } from "@/components/ui/separator";
@@ -51,7 +51,6 @@ export function BulkBar({
   const [busy, setBusy] = useState(false);
   const [bubble, setBubble] = useState(false);
   const [labels, setLabels] = useState(false);
-  const [collect, setCollect] = useState(false);
   const sel = threads.filter((t) => selected.has(t.id));
   const allRead = sel.every((t) => !t.unread);
   const commonLabels = new Set(sel.length ? sel[0].labels.map((l) => l.id).filter((id) => sel.every((t) => t.labels.some((l) => l.id === id))) : []);
@@ -118,14 +117,6 @@ export function BulkBar({
         </PopoverTrigger>
         <PopoverContent align="start" className="w-auto p-0">
           <LabelPicker current={commonLabels} onToggle={(id, on) => bulk.mutate({ thread_ids: ids, action: "labels", ...(on ? { add: [id] } : { remove: [id] }) })} onClose={() => setLabels(false)} />
-        </PopoverContent>
-      </Popover>
-      <Popover open={collect} onOpenChange={setCollect}>
-        <PopoverTrigger asChild>
-          <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground"><FolderPlus /> Collect</Button>
-        </PopoverTrigger>
-        <PopoverContent align="start" className="w-auto p-0">
-          <CollectionPicker current={new Set()} onToggle={(id, on) => bulk.mutate({ thread_ids: ids, action: "collections", ...(on ? { add: [id] } : { remove: [id] }) })} onClose={() => setCollect(false)} />
         </PopoverContent>
       </Popover>
       {ids.length >= 2 && (

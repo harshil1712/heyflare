@@ -3,8 +3,7 @@ import type { AppEnv } from "../env";
 import type { UserRow, AccountRow } from "../db";
 import { uid, now, toUser } from "../db";
 import { hashPassword, verifyPassword, createSession, destroySession, getSessionUser } from "../auth";
-import { googleAuthUrl, googleConfigured, exchangeCode, fetchUserInfo, type GoogleScopeMode } from "../google";
-import { ensureDefaultCalendars } from "../calendar/sources";
+import { googleAuthUrl, googleConfigured, exchangeCode, fetchUserInfo } from "../google";
 import { verifyTotp, matchRecoveryCode } from "../totp";
 
 const auth = new Hono<AppEnv>();
@@ -167,36 +166,18 @@ function redirectUriFor(c: any): string {
  * knows to finish with a plain confirmation page instead of redirecting into the app's webview.
  */
 export const HANDOFF_PREFIX = "hx_";
-/** States that additionally ask for the Google Calendar scope. Combines with HANDOFF_PREFIX. */
-export const CAL_PREFIX = "cal_";
-/** States that ask for Calendar and *nothing else* — no mail scope at all. Combines with HANDOFF_PREFIX. */
-export const CAL_ONLY_PREFIX = "calonly_";
-
-/** Which scope set a minted state stands for. "calonly_" is checked first: it is not a "cal_" state. */
-export function scopeModeForState(state: string): GoogleScopeMode {
-  if (state.includes(CAL_ONLY_PREFIX)) return "calendar";
-  if (state.includes(CAL_PREFIX)) return "mail+calendar";
-  return "mail";
-}
-
-/** The state prefix (after any handoff prefix) for a scope mode. */
-export function statePrefixFor(mode: GoogleScopeMode): string {
-  return mode === "calendar" ? CAL_ONLY_PREFIX : mode === "mail+calendar" ? CAL_PREFIX : "";
-}
-
 auth.get("/google/start", async (c) => {
   const user = await getSessionUser(c);
   if (!user) return c.redirect("/login?next=/settings/accounts");
   if (!googleConfigured(c.env)) {
     return c.json({ error: "google_not_configured", message: "Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET secrets." }, 500);
   }
-  const mode: GoogleScopeMode = c.req.query("calendar_only") === "1" ? "calendar" : c.req.query("calendar") === "1" ? "mail+calendar" : "mail";
-  const state = statePrefixFor(mode) + uid();
+  const state = uid();
   await c.env.DB.prepare(`INSERT INTO oauth_states (state, user_id, created_at) VALUES (?, ?, ?)`).bind(state, user.id, now()).run();
   // Prune old states opportunistically.
   c.executionCtx.waitUntil(c.env.DB.prepare(`DELETE FROM oauth_states WHERE created_at < ?`).bind(now() - 3600_000).run());
   const hint = c.req.query("login_hint") ?? undefined;
-  return c.redirect(googleAuthUrl(c.env, state, redirectUriFor(c), hint, mode));
+  return c.redirect(googleAuthUrl(c.env, state, redirectUriFor(c), hint));
 });
 
 /** Standalone page shown in the browser tab that finished a handoff (the app is a separate window). */
@@ -236,7 +217,7 @@ auth.get("/google/handoff", async (c) => {
   const st = await c.env.DB.prepare(`SELECT state FROM oauth_states WHERE state = ? AND created_at > ?`).bind(state, now() - 3600_000).first<{ state: string }>();
   if (!st) return c.json({ error: "invalid_state" }, 400);
   const hint = c.req.query("login_hint") ?? undefined;
-  return c.redirect(googleAuthUrl(c.env, state, redirectUriFor(c), hint, scopeModeForState(state)));
+  return c.redirect(googleAuthUrl(c.env, state, redirectUriFor(c), hint));
 });
 
 auth.get("/google/callback", async (c) => {
@@ -289,11 +270,9 @@ auth.get("/google/callback", async (c) => {
       const { wakeSyncActor } = await import("../sync-actor");
       const { ensureGmailWatch } = await import("../pubsub");
       c.executionCtx.waitUntil(wakeSyncActor(c.env, account.id, "connect").then(() => ensureGmailWatch(c.env, account)));
-      c.executionCtx.waitUntil(ensureDefaultCalendars(c.env, user.id, account).catch(() => {}));
     }
     if (handoff) {
-      const what = scopeModeForState(state) === "calendar" ? "calendar is now syncing" : "is now syncing";
-      return c.html(handoffPage("Connected", `${info.email} ${what}. You can close this tab and go back to heyflare.`, true), 200);
+      return c.html(handoffPage("Connected", `${info.email} is now syncing. You can close this tab and go back to heyflare.`, true), 200);
     }
     return c.redirect(`/?connected=1&account=${accountId}`);
   } catch (e) {

@@ -16,7 +16,7 @@ const mail = new Hono<AppEnv>();
 export type MailOps = {
   env: Env;
   userId: string;
-  /** All of the user's account ids (label/collection ownership checks). */
+  /** All of the user's account ids (label ownership checks). */
   accountIds: string[];
   waitUntil?: (p: Promise<unknown>) => void;
 };
@@ -347,11 +347,6 @@ export async function loadThreadDetail(db: D1Database, userId: string, id: strin
     attsByMsg.set(a.message_id, arr);
   }
   const labels = await getLabelsForThreads(db, [row.id]);
-  const cols = await db
-    .prepare(`SELECT c.id, c.name FROM collection_threads ct JOIN collections c ON c.id = ct.collection_id WHERE ct.thread_id = ? ORDER BY c.name`)
-    .bind(row.id)
-    .all<{ id: string; name: string }>();
-  const clips = await db.prepare(`SELECT * FROM clips WHERE thread_id = ? AND account_id = ? ORDER BY created_at DESC`).bind(row.id, accId).all<any>();
   const [summary] = await attachAvatars(db, [toThreadSummary(row, labels.get(row.id) ?? [])]);
   const messages = msgs.results.map((m) => toMessage(m, attsByMsg.get(m.id) ?? []));
   const msgAvatars = await avatarMap(
@@ -365,8 +360,6 @@ export async function loadThreadDetail(db: D1Database, userId: string, id: strin
   const detail: ThreadDetail = {
     ...summary,
     messages,
-    collections: cols.results,
-    clips: clips.results.map((k) => ({ id: k.id, account_id: k.account_id, thread_id: k.thread_id, message_id: k.message_id, text: k.text, created_at: k.created_at })),
     merged_threads: merged.results.map((m) => ({ id: m.id, subject: m.custom_subject ?? m.subject })),
     sender_bundled: !!(await db.prepare(`SELECT bundled FROM contacts WHERE account_id = ? AND email = ?`).bind(row.account_id, row.last_from_email.toLowerCase()).first<{ bundled: number }>())?.bundled,
   };
@@ -534,25 +527,11 @@ export async function applyAction(ops: MailOps, threadId: string, body: ActionBo
       if (stmts.length) await runBatch(db, stmts, 40);
       return { ok: true };
     }
-    case "collections": {
-      const stmts: D1PreparedStatement[] = [];
-      for (const col of body.add ?? []) {
-        stmts.push(
-          db.prepare(`INSERT OR IGNORE INTO collection_threads (collection_id, thread_id, added_at) SELECT id, ?, ? FROM collections WHERE id = ? AND account_id IN ${ownedIn.sql}`).bind(threadId, t, col, ...ownedIn.params)
-        );
-        stmts.push(db.prepare(`UPDATE collections SET updated_at = ? WHERE id = ? AND account_id IN ${ownedIn.sql}`).bind(t, col, ...ownedIn.params));
-      }
-      for (const col of body.remove ?? []) stmts.push(db.prepare(`DELETE FROM collection_threads WHERE collection_id = ? AND thread_id = ?`).bind(col, threadId));
-      if (stmts.length) await runBatch(db, stmts, 40);
-      return { ok: true };
-    }
     case "delete": {
       const merged = await db.prepare(`SELECT id, gmail_thread_id FROM threads WHERE merged_into = ? AND account_id = ?`).bind(threadId, accId).all<{ id: string; gmail_thread_id: string }>();
       const ids = [threadId, ...merged.results.map((m) => m.id)];
       await db.batch([
         db.prepare(`DELETE FROM thread_labels WHERE thread_id IN (${placeholders(ids.length)})`).bind(...ids),
-        db.prepare(`DELETE FROM collection_threads WHERE thread_id IN (${placeholders(ids.length)})`).bind(...ids),
-        db.prepare(`DELETE FROM clips WHERE thread_id IN (${placeholders(ids.length)})`).bind(...ids),
         db.prepare(`DELETE FROM attachments WHERE thread_id IN (${placeholders(ids.length)})`).bind(...ids),
         db.prepare(`DELETE FROM messages WHERE thread_id IN (${placeholders(ids.length)})`).bind(...ids),
         db.prepare(`DELETE FROM threads WHERE id IN (${placeholders(ids.length)})`).bind(...ids),

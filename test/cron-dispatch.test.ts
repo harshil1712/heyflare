@@ -14,8 +14,6 @@ function stubSystems(): CronSubsystems {
   return {
     bubbleUps: vi.fn(async () => 0),
     scheduledSends: vi.fn(async () => 0),
-    learning: vi.fn(async () => undefined),
-    calendarSync: vi.fn(async () => undefined),
     watchSweep: vi.fn(async () => ({ renewed: 0, woke: 0 })),
     retention: vi.fn(async () => ({ deletedThreads: 0 })),
   };
@@ -32,16 +30,12 @@ describe("cron dispatch", () => {
     expect(systems.bubbleUps).toHaveBeenCalledTimes(1);
     expect(systems.scheduledSends).toHaveBeenCalledTimes(1);
     expect(systems.watchSweep).toHaveBeenCalledTimes(1);
-    expect(systems.learning).not.toHaveBeenCalled();
-    expect(systems.calendarSync).not.toHaveBeenCalled();
     expect(systems.retention).not.toHaveBeenCalled();
   });
 
   it("runs only the slow set on the quarter-hour pattern", async () => {
     const systems = stubSystems();
     await runCron(fakeEnv, QUARTER_HOUR, systems);
-    expect(systems.learning).toHaveBeenCalledTimes(1);
-    expect(systems.calendarSync).toHaveBeenCalledTimes(1);
     expect(systems.retention).toHaveBeenCalledTimes(1);
     expect(systems.bubbleUps).not.toHaveBeenCalled();
     expect(systems.scheduledSends).not.toHaveBeenCalled();
@@ -54,8 +48,6 @@ describe("cron dispatch", () => {
     expect(systems.bubbleUps).toHaveBeenCalledTimes(1);
     expect(systems.scheduledSends).toHaveBeenCalledTimes(1);
     expect(systems.watchSweep).toHaveBeenCalledTimes(1);
-    expect(systems.learning).not.toHaveBeenCalled();
-    expect(systems.calendarSync).not.toHaveBeenCalled();
     expect(systems.retention).not.toHaveBeenCalled();
   });
 
@@ -89,15 +81,11 @@ describe("cron dispatch", () => {
     const bubbleUps = vi.spyOn(cronSubsystems, "bubbleUps").mockResolvedValue(0);
     const scheduledSends = vi.spyOn(cronSubsystems, "scheduledSends").mockResolvedValue(0);
     const watchSweep = vi.spyOn(cronSubsystems, "watchSweep").mockResolvedValue({ renewed: 0, woke: 0 });
-    const learning = vi.spyOn(cronSubsystems, "learning").mockResolvedValue(undefined);
-    const calendarSync = vi.spyOn(cronSubsystems, "calendarSync").mockResolvedValue(undefined);
     const retention = vi.spyOn(cronSubsystems, "retention").mockResolvedValue({ deletedThreads: 0 });
 
     worker.scheduled({ cron: QUARTER_HOUR } as ScheduledEvent, testEnv(), ctx);
     await Promise.all(waited);
 
-    expect(learning).toHaveBeenCalledTimes(1);
-    expect(calendarSync).toHaveBeenCalledTimes(1);
     expect(retention).toHaveBeenCalledTimes(1);
     expect(bubbleUps).not.toHaveBeenCalled();
     expect(scheduledSends).not.toHaveBeenCalled();

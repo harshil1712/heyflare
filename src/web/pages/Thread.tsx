@@ -1,16 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { ArrowLeft, ArrowUpCircle, Bookmark, Check, ChevronDown, ChevronsDownUp, Clock, Download, FileText, FolderOpen, Forward, GitMerge, Inbox, Mail, MoreHorizontal, Paperclip, Pencil, Pin, Reply, ReplyAll, Rss, Scissors, CalendarPlus, ScrollText, StickyNote, Tag, Trash2, X, Layers, Sparkles } from "lucide-react";
+import { ArrowLeft, ArrowUpCircle, Bookmark, Check, ChevronDown, ChevronsDownUp, Clock, Download, FileText, Forward, GitMerge, Inbox, Mail, MoreHorizontal, Paperclip, Pencil, Pin, Reply, ReplyAll, Rss, ScrollText, StickyNote, Tag, Trash2, X, Layers } from "lucide-react";
 import { toast } from "sonner";
 import type { Address, Message, ThreadDetail } from "@shared/types";
 import { cn } from "@/lib/utils";
-import { useAssistant } from "../lib/assistantStore";
-import { attachmentUrl, useClipMutations, useEventFromThread, useThread, useThreadAction } from "../api";
+import { attachmentUrl, useThread, useThreadAction } from "../api";
 import { useAccount } from "../context/AccountContext";
 import { HtmlBody } from "../components/HtmlBody";
 import { Composer, fileIcon, type ComposerInitial } from "../components/Composer";
 import { DateTimePicker } from "../components/DatePicker";
-import { CollectionMenuItems, LabelChip, LabelMenuItems, ThreadPicker } from "../components/Pickers";
+import { LabelChip, LabelMenuItems, ThreadPicker } from "../components/Pickers";
 import { bucketName } from "../components/BulkBar";
 import { Avatar, AvatarStack, AccountGlyph } from "../components/Avatar";
 import { ErrorState } from "../components/EmptyState";
@@ -26,7 +25,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { AiReplyButton, AiSummaryPanel, useThreadSummary } from "../components/AiReply";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
@@ -86,7 +84,7 @@ function AttachmentItem({ a }: { a: { id: string; message_id: string; filename: 
   );
 }
 
-function MessageRow({ m, expanded, focused, index, onToggle, onReply, onClip, onMarkUnread, isLast }: { m: Message; expanded: boolean; focused: boolean; index: number; onToggle: () => void; onReply: (mode: ReplyMode, m: Message) => void; onClip: (text: string) => void; onMarkUnread: () => void; isLast: boolean }) {
+function MessageRow({ m, expanded, focused, index, onToggle, onReply, onMarkUnread, isLast }: { m: Message; expanded: boolean; focused: boolean; index: number; onToggle: () => void; onReply: (mode: ReplyMode, m: Message) => void; onMarkUnread: () => void; isLast: boolean }) {
   const [plain, setPlain] = useState(false);
   const [mounted, setMounted] = useState(expanded);
   useEffect(() => {
@@ -167,7 +165,7 @@ function MessageRow({ m, expanded, focused, index, onToggle, onReply, onClip, on
       </header>
       {expanded && mounted && (
         <div className="pl-[34px] pt-3">
-          <HtmlBody html={m.html_body} text={m.text_body} trackers={m.trackers} onClip={onClip} plain={plain} />
+          <HtmlBody html={m.html_body} text={m.text_body} trackers={m.trackers} plain={plain} />
           {files.length > 0 && (
             <div className="mt-4">
               <div className="text-xs text-muted-foreground mb-1.5 flex items-center gap-1.5">
@@ -189,21 +187,16 @@ function MessageRow({ m, expanded, focused, index, onToggle, onReply, onClip, on
 /** Keeps a fixed element horizontally centered within the <main> column rather than the viewport. */
 function useMainColumn() {
   const [pos, setPos] = useState<{ left: number; width: number } | null>(null);
-  // When the floating assistant panel is open (desktop), keep the bar centred in the space it leaves free.
-  const aState = useAssistant();
-  const assistantOpen = aState.open && aState.mode === "float";
-  const docked = aState.open && aState.mode === "dock";
   useEffect(() => {
     const main = document.querySelector("main");
     if (!main) return;
     const upd = () => {
-      // `main` here is the SidebarInset (it renders a <main>); use its content box so a docked assistant's padding counts.
+      // `main` here is the SidebarInset (it renders a <main>); use its content box.
       const r = main.getBoundingClientRect();
       const cs = getComputedStyle(main);
       const padL = parseFloat(cs.paddingLeft) || 0;
       const padR = parseFloat(cs.paddingRight) || 0;
-      const reserve = assistantOpen && window.innerWidth >= 768 ? 416 : 0;
-      setPos({ left: r.left + padL, width: Math.max(320, r.width - padL - padR - reserve) });
+      setPos({ left: r.left + padL, width: Math.max(320, r.width - padL - padR) });
     };
     upd();
     const ro = new ResizeObserver(upd);
@@ -213,8 +206,8 @@ function useMainColumn() {
       ro.disconnect();
       window.removeEventListener("resize", upd);
     };
-  }, [assistantOpen, docked]);
-  return pos ? { ...pos, compact: assistantOpen || docked } : pos;
+  }, []);
+  return pos;
 }
 
 const bucketIcon = { imbox: <Inbox />, feed: <Rss />, paper_trail: <ScrollText /> } as const;
@@ -238,8 +231,6 @@ export default function Thread() {
   const { user, accountFor, glyphFor, multi } = useAccount();
   const q = useThread(id, peek);
   const act = useThreadAction(id);
-  const toEvent = useEventFromThread();
-  const clips = useClipMutations();
   const t = q.data;
   const col = useMainColumn();
   const account = accountFor(t?.account_id);
@@ -247,7 +238,6 @@ export default function Thread() {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [msgCursor, setMsgCursor] = useState(-1);
   const [reply, setReply] = useState<{ mode: ReplyMode; m: Message; key: number; body_html?: string } | null>(null);
-  const summ = useThreadSummary(id ?? "");
   const [renaming, setRenaming] = useState(false);
   const [subjectDraft, setSubjectDraft] = useState("");
   const [noteOpen, setNoteOpen] = useState(false);
@@ -454,11 +444,6 @@ export default function Thread() {
             <LabelChip label={l} />
           </Link>
         ))}
-        {t.collections.map((c) => (
-          <Link key={c.id} to={`/collections/${c.id}`} className="hover:opacity-80">
-            <Badge variant="outline" className="font-normal text-foreground/90"><FolderOpen />{c.name}</Badge>
-          </Link>
-        ))}
       </div>
 
       {/* Sticky note */}
@@ -500,24 +485,6 @@ export default function Thread() {
         </div>
       )}
 
-      {/* Clips */}
-      {t.clips.length > 0 && (
-        <div className="mt-3 flex flex-wrap gap-1.5">
-          {t.clips.map((c) => (
-            <Badge key={c.id} variant="secondary" className="group max-w-full font-normal pr-0.5 h-6" title={c.text}>
-              <Scissors className="text-muted-foreground" />
-              <span className="truncate max-w-72">“{c.text}”</span>
-              <Button variant="ghost" size="icon-xs" className="size-5 text-muted-foreground" aria-label="Delete clip" onClick={() => clips.remove.mutate(c.id, { onSuccess: () => toast("Clip removed") })}>
-                <X />
-              </Button>
-            </Badge>
-          ))}
-        </div>
-      )}
-
-      {summ.summary && <AiSummaryPanel summary={summ.summary} onClose={summ.clear} className="mt-4" />}
-      {summ.pending && !summ.summary && <div className="mt-4 flex items-center gap-2 text-[13px] text-muted-foreground"><Sparkles className="size-3.5" /> Summarising…</div>}
-
       {/* Messages */}
       <div className="mt-5">
         {t.messages.length > 2 && (
@@ -545,7 +512,6 @@ export default function Thread() {
                 })
               }
               onReply={(mode, msg) => openReply(mode, msg)}
-              onClip={(text) => clips.create.mutate({ thread_id: t.id, message_id: m.id, text }, { onSuccess: () => toast("Clip saved") })}
               onMarkUnread={() => run({ action: "mark_unread" }, "Marked unread")}
             />
           ))}
@@ -584,12 +550,11 @@ export default function Thread() {
 
       {/* Docked action bar (hidden while the reply composer is open; it has its own Send) */}
       <div className={cn("fixed z-40 bottom-4 flex justify-center pointer-events-none px-3", reply && "hidden")} style={col ? { left: col.left, width: col.width } : { left: 0, right: 0 }}>
-        <div data-compact-bar={col?.compact || undefined} className="pointer-events-auto flex items-center gap-1 rounded-lg bg-background/90 backdrop-blur ring-1 ring-border shadow-md p-1 max-w-full overflow-x-auto">
+        <div className="pointer-events-auto flex items-center gap-1 rounded-lg bg-background/90 backdrop-blur ring-1 ring-border shadow-md p-1 max-w-full overflow-x-auto">
           <ButtonGroup>
             <Button size="sm" onClick={() => openReply("reply")}><Reply /> Reply</Button>
             <Bar label="Reply all"><Button size="sm" variant="outline" onClick={() => openReply("replyAll")}><ReplyAll /><span className="hidden sm:inline">All</span></Button></Bar>
             <Bar label="Forward" kbd="f"><Button size="sm" variant="outline" onClick={() => openReply("forward")}><Forward /><span className="hidden sm:inline">Forward</span></Button></Bar>
-            <AiReplyButton threadId={t.id} onResult={(r) => { if (lastIncoming) { setReply({ mode: "reply", m: lastIncoming, key: Date.now(), body_html: r.body_html }); setTimeout(() => document.getElementById("reply-box")?.scrollIntoView({ behavior: "smooth", block: "nearest" }), 60); } }} />
           </ButtonGroup>
           <ButtonGroup>
             <Bar label={t.reply_later ? "Remove from Reply Later" : "Reply later"} kbd="l">
@@ -632,32 +597,12 @@ export default function Thread() {
                   </DropdownMenuItem>
                 ))}
               <DropdownMenuSeparator />
-              <DropdownMenuItem onSelect={() => summ.run()} disabled={summ.pending}><Sparkles /> {summ.pending ? "Summarising…" : "Summarise with AI"}</DropdownMenuItem>
-              <DropdownMenuItem
-                disabled={toEvent.isPending}
-                onSelect={async () => {
-                  try {
-                    const prefill = await toEvent.mutateAsync(t.id);
-                    nav("/calendar", { state: { newEvent: prefill } });
-                  } catch {
-                    /* the calendar page will still open empty if this fails */
-                  }
-                }}
-              >
-                <CalendarPlus /> Create event
-              </DropdownMenuItem>
               <DropdownMenuItem onSelect={() => { setSubjectDraft(t.subject); setRenaming(true); }}><Pencil /> Rename subject</DropdownMenuItem>
               <DropdownMenuItem onSelect={() => setNoteOpen(true)}><StickyNote /> {t.note ? "Edit note" : "Stick a note on it"} <DropdownMenuShortcut>n</DropdownMenuShortcut></DropdownMenuItem>
               <DropdownMenuSub>
                 <DropdownMenuSubTrigger><Tag /> Labels</DropdownMenuSubTrigger>
                 <DropdownMenuSubContent className="w-52">
                   <LabelMenuItems current={new Set(t.labels.map((l) => l.id))} onToggle={(lid, on) => run({ action: "labels", ...(on ? { add: [lid] } : { remove: [lid] }) })} onManage={() => nav("/labels")} />
-                </DropdownMenuSubContent>
-              </DropdownMenuSub>
-              <DropdownMenuSub>
-                <DropdownMenuSubTrigger><FolderOpen /> Collections</DropdownMenuSubTrigger>
-                <DropdownMenuSubContent className="w-52">
-                  <CollectionMenuItems current={new Set(t.collections.map((c) => c.id))} onToggle={(cid, on) => run({ action: "collections", ...(on ? { add: [cid] } : { remove: [cid] }) })} onManage={() => nav("/collections")} />
                 </DropdownMenuSubContent>
               </DropdownMenuSub>
               <DropdownMenuItem onSelect={() => setMergeOpen(true)}><GitMerge /> Merge with…</DropdownMenuItem>

@@ -10,15 +10,9 @@ import mailRoutes from "./routes/mail";
 import screenerRoutes from "./routes/screener";
 import contactRoutes from "./routes/contacts";
 import labelRoutes from "./routes/labels";
-import collectionRoutes from "./routes/collections";
-import clipRoutes from "./routes/clips";
 import composeRoutes from "./routes/compose";
 import bundleRoutes from "./routes/bundles";
-import aiRoutes from "./routes/ai";
-import { runLearning } from "./ai/memory";
 import domainRoutes from "./routes/domains";
-import calendarRoutes from "./routes/calendar";
-import { runCalendarSync } from "./calendar/sync";
 import { handleInboundEmail } from "./inbound";
 import { ensureMigrations } from "./migrations";
 import { VERSION, COMMIT, BUILT_AT } from "@shared/version";
@@ -27,10 +21,8 @@ import { sweepGmailWatches } from "./pubsub";
 import tokensRoutes from "./routes/tokens";
 import pushRoutes from "./routes/push";
 import { handleMcpRequest } from "./mcp";
-import { routeAgentRequest } from "agents";
 
 export { SyncActor } from "./sync-actor";
-export { AssistantAgent } from "./ai/assistant-agent";
 
 const app = new Hono<AppEnv>();
 
@@ -66,22 +58,18 @@ api.use("*", requireUser);
 api.route("/me", meRoutes);
 api.route("/accounts", accountRoutes);
 api.route("/domains", domainRoutes);
-api.route("/ai", aiRoutes);
-api.route("/calendar", calendarRoutes);
 api.route("/tokens", tokensRoutes);
 api.route("/push", pushRoutes);
 
 
 const scoped = new Hono<AppEnv>();
-for (const p of ["/counts", "/imbox", "/threads", "/threads/*", "/feed", "/search", "/messages/*", "/files", "/screener", "/screener/*", "/contacts", "/contacts/*", "/labels", "/labels/*", "/collections", "/collections/*", "/clips", "/clips/*", "/drafts", "/drafts/*", "/send", "/send/*", "/bundles", "/bundles/*", "/power-through", "/power-through/*"]) {
+for (const p of ["/counts", "/imbox", "/threads", "/threads/*", "/feed", "/search", "/messages/*", "/files", "/screener", "/screener/*", "/contacts", "/contacts/*", "/labels", "/labels/*", "/drafts", "/drafts/*", "/send", "/send/*", "/bundles", "/bundles/*", "/power-through", "/power-through/*"]) {
   scoped.use(p, requireAccount);
 }
 scoped.route("/", mailRoutes); // counts, imbox, threads, feed, search, messages/*/attachments, files
 scoped.route("/screener", screenerRoutes);
 scoped.route("/contacts", contactRoutes);
 scoped.route("/labels", labelRoutes);
-scoped.route("/collections", collectionRoutes);
-scoped.route("/clips", clipRoutes);
 scoped.route("/bundles", bundleRoutes);
 scoped.route("/", composeRoutes); // drafts, send
 api.route("/", scoped);
@@ -109,12 +97,10 @@ export function shouldRunMinute(cron: string): boolean {
   return cron.trim() !== QUARTER_HOUR_CRON;
 }
 
-/** The six cron subsystems, injectable so tests can spy on the dispatch. */
+/** The cron subsystems, injectable so tests can spy on the dispatch. */
 export interface CronSubsystems {
   bubbleUps: (db: Env["DB"]) => Promise<unknown>;
   scheduledSends: (env: Env) => Promise<unknown>;
-  learning: (env: Env) => Promise<unknown>;
-  calendarSync: (env: Env) => Promise<unknown>;
   watchSweep: (env: Env) => Promise<unknown>;
   retention: (env: Env) => Promise<unknown>;
 }
@@ -122,8 +108,6 @@ export interface CronSubsystems {
 export const cronSubsystems: CronSubsystems = {
   bubbleUps: (db) => processBubbleUps(db),
   scheduledSends: (env) => processScheduledSends(env),
-  learning: (env) => runLearning(env),
-  calendarSync: (env) => runCalendarSync(env),
   watchSweep: (env) => sweepGmailWatches(env),
   // Lazy-loaded as before — the retention code only lands in the isolate when a tick needs it.
   retention: (env) => import("./blobs").then((m) => m.sweepRetention(env)),
@@ -151,16 +135,6 @@ export async function runCron(env: Env, cron: string, systems: CronSubsystems = 
     return;
   }
   try {
-    await systems.learning(env);
-  } catch (e) {
-    console.error("ai learning failed", e);
-  }
-  try {
-    await systems.calendarSync(env);
-  } catch (e) {
-    console.error("calendar sync failed", e);
-  }
-  try {
     await systems.retention(env);
   } catch (e) {
     console.error("retention sweep failed", e);
@@ -171,15 +145,13 @@ export default {
   fetch: async (request: Request, env: Env, ctx: ExecutionContext) => {
     const { pathname } = new URL(request.url);
     // Static assets never need the database; everything else gets a migrated schema first (cached after the first call).
-    if (pathname.startsWith("/api/") || pathname.startsWith("/auth/") || pathname.startsWith("/pubsub/") || pathname.startsWith("/mcp") || pathname.startsWith("/agents")) {
+    if (pathname.startsWith("/api/") || pathname.startsWith("/auth/") || pathname.startsWith("/pubsub/") || pathname.startsWith("/mcp")) {
       try {
         await ensureMigrations(env);
       } catch (e) {
         return Response.json({ error: "migration_failed", message: (e as Error).message?.slice(0, 300) }, { status: 500 });
       }
     }
-    const agentResponse = await routeAgentRequest(request, env);
-    if (agentResponse) return agentResponse;
     return app.fetch(request, env, ctx);
   },
   scheduled: (event: ScheduledEvent, env: Env, ctx: ExecutionContext) => {

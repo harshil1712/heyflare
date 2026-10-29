@@ -57,7 +57,7 @@ export function useCardScroll(enabled = true, opts: { arrows?: boolean } = {}) {
 
 /**
  * Arrow-key cursor for pages that are lists of things rather than something to read: Set Aside,
- * Drafts, Clips, Files… ↑/↓ (or j/k) walk the items, Enter/o opens the focused one. Nothing is
+ * Drafts, Files… ↑/↓ (or j/k) walk the items, Enter/o opens the focused one. Nothing is
  * focused until the first press, and an empty page falls back to scrolling so the keys never feel dead.
  *
  * Mark each item with `data-item-index={i}` (and `scroll-mt-20`, so the sticky header doesn't clip it).

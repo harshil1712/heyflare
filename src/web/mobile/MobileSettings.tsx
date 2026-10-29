@@ -1,8 +1,7 @@
-import { AiSection } from "../components/AiSettingsSection";
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, Globe, KeyRound, LogOut, Mail, Monitor, Moon, Plus, RefreshCw, SlidersHorizontal, Sun, Trash2, Unplug, User, Sparkles } from "lucide-react";
+import { ChevronRight, Globe, KeyRound, LogOut, Mail, Monitor, Moon, Plus, RefreshCw, SlidersHorizontal, Sun, Trash2, Unplug, User } from "lucide-react";
 import { toast } from "sonner";
 import type { Account, Domain } from "@shared/types";
 import { cn } from "@/lib/utils";
@@ -91,7 +90,6 @@ export default function MobileSettings() {
         <Row to="/settings/preferences" icon={<SlidersHorizontal />} label="Preferences" />
         <Row to="/settings/accounts" icon={<Mail />} label="Accounts" count={accounts.length} />
         <Row to="/settings/domains" icon={<Globe />} label="Domains" count={domains.data?.length} />
-        <Row to="/settings/ai" icon={<Sparkles />} label="AI assistant" />
         <Row to="/settings/security" icon={<KeyRound />} label="Security" />
       </Group>
       <Group title="App">
@@ -128,13 +126,6 @@ export function MobileSettingsPreferences() {
   return (
     <Sub title="Preferences">
       <div className={sectionCls}><PreferencesSection compact /></div>
-    </Sub>
-  );
-}
-export function MobileSettingsAi() {
-  return (
-    <Sub title="AI assistant">
-      <div className={sectionCls}><AiSection compact /></div>
     </Sub>
   );
 }
@@ -250,7 +241,7 @@ export function MobileSettingsAccountDetail() {
         open={confirmReset}
         onOpenChange={setConfirmReset}
         title={`Start fresh with ${a.email}?`}
-        body="This deletes everything heyflare has synced for this account — threads, contacts, screener decisions, clips, drafts. Gmail itself is untouched. New mail from now on will go through the Screener."
+        body="This deletes everything heyflare has synced for this account — threads, contacts, screener decisions, drafts. Gmail itself is untouched. New mail from now on will go through the Screener."
         action="Start fresh"
         onConfirm={() => reset.mutate(a.id, { onSuccess: (r) => (r.sync_error ? toast.error(`Reset done, but the first sync failed: ${r.sync_error}`) : toast("Starting fresh — watching for new mail from now on")), onError: (e) => toast.error((e as Error).message) })}
       />

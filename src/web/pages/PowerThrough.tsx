@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { ArrowLeft, Bookmark, Check, ChevronDown, Clock, FileText, FolderOpen, Inbox, MoreHorizontal, Reply, Rss, StickyNote, Tag, Trash2, ArrowUpCircle } from "lucide-react";
+import { ArrowLeft, Bookmark, Check, ChevronDown, Clock, FileText, Inbox, MoreHorizontal, Reply, Rss, StickyNote, Tag, Trash2, ArrowUpCircle } from "lucide-react";
 import { toast } from "sonner";
 import type { Message, ThreadDetail, ThreadSummary } from "@shared/types";
 import { cn } from "@/lib/utils";
@@ -9,7 +9,7 @@ import { useAccount } from "../context/AccountContext";
 import { HtmlBody } from "../components/HtmlBody";
 import { Composer, type ComposerInitial } from "../components/Composer";
 import { DateTimePicker } from "../components/DatePicker";
-import { CollectionMenuItems, LabelChip, LabelMenuItems } from "../components/Pickers";
+import { LabelChip, LabelMenuItems } from "../components/Pickers";
 import { Avatar, AccountGlyph } from "../components/Avatar";
 import { ErrorState } from "../components/EmptyState";
 import { replyInitial } from "./Thread";
@@ -34,7 +34,7 @@ const OUT_MS = 160;
 
 /** `replyInitial` only reads the thread's ids and subject, both of which a summary carries. */
 function asDetail(t: PowerItem): ThreadDetail {
-  return { ...t, messages: [], collections: [], clips: [], merged_threads: [], sender_bundled: false } as unknown as ThreadDetail;
+  return { ...t, messages: [], merged_threads: [], sender_bundled: false } as unknown as ThreadDetail;
 }
 
 function PowerCard({
@@ -197,14 +197,6 @@ function PowerCard({
                 </DropdownMenuSubTrigger>
                 <DropdownMenuSubContent>
                   <LabelMenuItems current={labelIds} onToggle={(id, on) => act.mutate({ action: "labels", ...(on ? { add: [id] } : { remove: [id] }) })} />
-                </DropdownMenuSubContent>
-              </DropdownMenuSub>
-              <DropdownMenuSub>
-                <DropdownMenuSubTrigger>
-                  <FolderOpen /> Add to collection
-                </DropdownMenuSubTrigger>
-                <DropdownMenuSubContent>
-                  <CollectionMenuItems current={new Set()} onToggle={(id, on) => act.mutate({ action: "collections", ...(on ? { add: [id] } : { remove: [id] }) })} />
                 </DropdownMenuSubContent>
               </DropdownMenuSub>
               <DropdownMenuItem onClick={() => setNoteOpen((v) => !v)}>

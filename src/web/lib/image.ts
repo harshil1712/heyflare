@@ -1,6 +1,6 @@
 /**
  * Day photos are stored as bytes in D1, which is not an object store — so the browser does the
- * resizing before anything is uploaded. A wall-calendar photo never needs to be a 12-megapixel
+ * resizing before anything is uploaded. A profile photo never needs to be a 12-megapixel
  * original, and a 4MB upload would blow past D1's row ceiling anyway.
  */
 export const MAX_COVER_EDGE = 1800;

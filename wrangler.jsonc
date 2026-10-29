@@ -13,7 +13,7 @@
     "directory": "./dist",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*", "/auth/*", "/pubsub/*", "/mcp", "/mcp/*", "/agents", "/agents/*"]
+    "run_worker_first": ["/api/*", "/auth/*", "/pubsub/*", "/mcp", "/mcp/*"]
   },
   "d1_databases": [
     { "binding": "DB", "database_name": "heyflare-db", "migrations_dir": "migrations" }
@@ -24,8 +24,7 @@
   // Cron split (dispatched by runCron in src/worker/index.ts):
   // - "* * * * *" every minute: only time-precision work — bubble-ups, scheduled sends, and the Gmail watch
   //   sweep (missed-push recovery + watch renewal; Pub/Sub is the primary ingest path).
-  // - "*/15 * * * *" every 15 minutes: the rest — AI learning (self-gates to 12h internally), calendar sync,
-  //   and the attachment/retention sweep.
+  // - "*/15 * * * *" every 15 minutes: the attachment/retention sweep.
   "triggers": { "crons": ["* * * * *", "*/15 * * * *"] },
   "vars": {
     "APP_NAME": "heyflare",
@@ -37,13 +36,13 @@
   },
   "durable_objects": {
     "bindings": [
-      { "name": "SYNC_ACTOR", "class_name": "SyncActor" },
-      { "name": "AssistantAgent", "class_name": "AssistantAgent" }
+      { "name": "SYNC_ACTOR", "class_name": "SyncActor" }
     ]
   },
   "migrations": [
     { "tag": "v1-sync-actor", "new_sqlite_classes": ["SyncActor"] },
-    { "tag": "v2-assistant-agent", "new_sqlite_classes": ["AssistantAgent"] }
+    { "tag": "v2-assistant-agent", "new_sqlite_classes": ["AssistantAgent"] },
+    { "tag": "v3-remove-assistant-agent", "deleted_classes": ["AssistantAgent"] }
   ],
   // Optional: a custom hostname instead of *.workers.dev (a zone on your account with no existing DNS record for the host):
   // "routes": [{ "pattern": "mail.example.com", "custom_domain": true }],

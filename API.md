@@ -36,7 +36,6 @@ Account-scoped routes take the account via `X-Account-Id` header (web stores the
   - `note` {note: string}
   - `merge` {thread_ids: string[]}  (merge those into :id)
   - `labels` {add?: string[], remove?: string[]}  (label ids)
-  - `collections` {add?: string[], remove?: string[]}
   - `delete` (permanent, local + Gmail trash)
   -> returns updated ThreadDetail
 - `POST /api/threads/bulk` {thread_ids: string[], action, ...same params} -> {ok}
@@ -55,11 +54,9 @@ Account-scoped routes take the account via `X-Account-Id` header (web stores the
 - `GET /api/contacts/:id` -> {contact: MergedContact, threads: ThreadSummary[]} — `contact.id`/`account_id` stay the requested row; `threads` covers every account in scope.
 - `PATCH /api/contacts/:id` {name?, notes?, screen_status?, bundled?, scope?: 'all'|'account'} -> MergedContact. `scope` defaults to `'all'` (every connected account, like screener/decide); `'account'` touches only this row and re-buckets only that account's threads. With `'all'` the change is applied even when this row already matches, so mixed accounts get squared up.
 
-## Labels / Collections / Clips / Files (account-scoped)
+## Labels / Files (account-scoped)
 - `GET/POST /api/labels`, `PATCH/DELETE /api/labels/:id` ({name,color})
 - `GET /api/labels/:id/threads` -> {threads}
-- `GET/POST /api/collections`, `GET /api/collections/:id` -> {collection, threads: ThreadSummary[], files: Attachment[]}, `PATCH/DELETE /api/collections/:id`
-- `GET /api/clips` -> Clip[]; `POST /api/clips` {thread_id, message_id?, text}; `DELETE /api/clips/:id`
 - `GET /api/files?page=` -> {files: Attachment[], next_page}
 
 ## Compose (account-scoped)
@@ -102,10 +99,10 @@ Account-scoped routes take the account via `X-Account-Id` header (web stores the
 - Pagination is zero-based on every list endpoint.
 
 ## Unified scope (added for the unified inbox)
-- `X-Account-Id: all` (or header absent) = **unified scope**: every account-scoped list/count/search/screener/contacts/labels/collections/clips/files/drafts endpoint returns rows across ALL of the user's accounts. A specific id narrows to that account. Header is still validated against the user.
-- Every account-owned object now carries `account_id`: `ThreadSummary`, `ThreadDetail`, `Message`, `Contact`, `Label`, `Collection`, `Clip`, `Draft`, `Attachment`.
-- Per-object routes (`/api/threads/:id`, actions, bulk, contacts/:id, labels/:id, collections/:id, clips/:id, drafts/:id, attachments) resolve the owning account from the object row (must belong to the user), regardless of the header.
-- Creating objects in unified scope: `POST /api/labels`, `POST /api/collections`, `POST /api/clips`, `POST /api/drafts` accept optional `account_id`; default = the thread's account when a `thread_id` is given, else the user's first account. Labels/collections may be applied to threads of any of the user's accounts.
+- `X-Account-Id: all` (or header absent) = **unified scope**: every account-scoped list/count/search/screener/contacts/labels/files/drafts endpoint returns rows across ALL of the user's accounts. A specific id narrows to that account. Header is still validated against the user.
+- Every account-owned object now carries `account_id`: `ThreadSummary`, `ThreadDetail`, `Message`, `Contact`, `Label`, `Draft`, `Attachment`.
+- Per-object routes (`/api/threads/:id`, actions, bulk, contacts/:id, labels/:id, drafts/:id, attachments) resolve the owning account from the object row (must belong to the user), regardless of the header.
+- Creating objects in unified scope: `POST /api/labels`, `POST /api/drafts` accept optional `account_id`; default = the thread's account when a `thread_id` is given, else the user's first account. Labels may be applied to threads of any of the user's accounts.
 - `POST /api/send` accepts `account_id` (the From account). Default = the thread's account for replies, else the user's first account. Response includes `account_id`.
 - `GET /api/counts`, `GET /api/imbox`, `GET /api/feed`, `GET /api/threads`, `GET /api/search`, `GET /api/files`, `GET /api/screener`, `GET /api/contacts` all honor unified scope. Screener entries include `account_id`. Contact rows stay per (account, email), but `GET /api/contacts` and `GET /api/contacts/:id` merge them per person; screening and bundling changes default to every account and take `scope: 'account'` to stay local.
 - `POST /api/accounts/:id/sync` unchanged; `GET /api/me` unchanged.
@@ -145,7 +142,7 @@ Without `CF_API_TOKEN`, domain setup is "manual": the API returns the exact step
 
 ## Account reset (added)
 - `POST /api/accounts/:id/reset` -> `{ ok, account, sync_error }`. "Start fresh": deletes everything synced for the account
-  (threads, messages, attachments + blobs, contacts/screener decisions, clips, drafts, labels, collections, sync log) and resets
+  (threads, messages, attachments + blobs, contacts/screener decisions, drafts, labels, sync log) and resets
   sync state; for Gmail it immediately records the current historyId so only mail arriving from now on is synced. Nothing in
   Gmail changes. `sync_error` is set when that first sync failed (it is retried by the cron).
 - Connecting a Gmail account no longer imports history: the first sync just records Gmail's historyId ("start from now"), and
@@ -161,22 +158,3 @@ Without `CF_API_TOKEN`, domain setup is "manual": the API returns the exact step
 
 ## Push
 - Web Push (PWA): `GET /api/push/vapid-public-key`, `GET/POST/DELETE /api/push/subscriptions` (VAPID endpoint + keys). Client registers `/sw.js` and toggles from Settings → Preferences. Payload is aes128gcm (works with iOS Home Screen PWAs). New Imbox / Reply Later / Screener mail triggers Web Push (cooldown via `push_notify_log`); badge count is unseen Imbox + Screener.
-
-## Calendar
-Mounted at `/api/calendar` behind `requireUser` and, unlike mail, **not** account-scoped — the calendar belongs to the
-owner, not to a mailbox, so `X-Account-Id` is ignored. The full route table, data model and sync behaviour live in
-[`docs/CALENDAR.md`](docs/CALENDAR.md). In brief:
-- `GET /api/calendar/events?from=&to=` -> `CalendarRange` — expanded occurrences plus habits, day labels and cover art,
-  the week's flexible tasks and time entries. Recurring masters from local and subscribed calendars are expanded per
-  request window; Google is asked for pre-expanded instances (`singleEvents=true`).
-- Events: `POST`, `PATCH /:id?scope=this|following|all`, `DELETE /:id?scope=…`, `/:id/rsvp`, `/:id/done`,
-  `/events/from-thread` (returns a prefill, creates nothing), `GET /events/:id.ics`.
-- Sources: `GET/POST /sources`, `/sources/subscribe` (ICS or webcal, read-only, SSRF-guarded), `/sources/import`,
-  `PATCH/DELETE /sources/:id`, `/sources/:id/sync`, `/sources/sync`, `/google/connect-link` for the Calendar scope, and
-  `POST /google/:accountId/disconnect` to take one account's calendars and their events back out again.
-- Also `habits`, `days/:date`, `journal/:date`, `flex-tasks`, `time`, and `settings`.
-- `accounts.scopes` records which OAuth scopes a refresh token carries. `GET /sources` reports every Google account in
-  `google_accounts` with `calendar`/`mail`/`calendar_count`/`sync_error`; one without
-  `https://www.googleapis.com/auth/calendar` also appears in `connectable` and needs one extra consent. An account can be
-  connected for calendar only (`connect-link` with `calendar_only`), in which case it carries no mail scope and the mail
-  cron skips it — an *empty* `scopes` predates the column and does mean mail.

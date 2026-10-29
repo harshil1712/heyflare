@@ -5,7 +5,6 @@ import { ALL, useAccount } from "../context/AccountContext";
 import { useAccountMutations, useImbox } from "../api";
 import { ThreadList } from "../components/ThreadList";
 import { Piles } from "../components/Trays";
-import { CalendarCover } from "../calendar/CalendarCover";
 import { Avatar } from "../components/Avatar";
 import { fmtRelative } from "../lib/format";
 import { useKeys } from "../lib/keys";
@@ -110,8 +109,6 @@ export default function Imbox() {
           <SyncPill />
         </div>
       </header>
-
-      <CalendarCover />
 
       {!!d?.screener_count && (
         <Link to="/screener" className="group flex items-center gap-3 rounded-md bg-muted/40 hover:bg-muted px-3 py-2.5 mb-5 transition-colors">
