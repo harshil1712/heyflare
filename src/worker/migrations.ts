@@ -55,6 +55,18 @@ export const MIGRATIONS: { name: string; sql: string }[] = [
   { name: "0024_counts_backfill.sql", sql: m0024 },
 ];
 
+const LATEST_MIGRATION = MIGRATIONS[MIGRATIONS.length - 1]!.name;
+
+/** One single-row primary-key read: true when the newest bundled migration is already recorded. */
+export async function isSchemaCurrent(db: D1Database): Promise<boolean> {
+  try {
+    const row = await db.prepare(`SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1`).first<{ name: string }>();
+    return row?.name === LATEST_MIGRATION;
+  } catch {
+    return false; // d1_migrations doesn't exist yet (fresh database)
+  }
+}
+
 /** Split a migration file into statements: full-line comments dropped, split on `;` at end of line.
  *  `CREATE TRIGGER … BEGIN … END;` bodies are kept as a single statement. */
 export function splitStatements(sql: string): string[] {
@@ -90,7 +102,7 @@ export function resetMigrationCache() {
   ready = null;
 }
 
-/** Apply pending migrations once per isolate. Cheap after the first call (a single SELECT, then cached). */
+/** Apply pending migrations once per isolate. A cold isolate on an up-to-date database costs one single-row read. */
 export function ensureMigrations(env: Env): Promise<void> {
   if (!ready) {
     ready = runMigrations(env).catch((e) => {
@@ -104,6 +116,7 @@ export function ensureMigrations(env: Env): Promise<void> {
 /** Uncached apply — used by tests so each isolate / storage snapshot gets a real schema. */
 export async function runMigrations(env: Env) {
   const db = env.DB;
+  if (await isSchemaCurrent(db)) return;
   await db.batch([
     db.prepare(`CREATE TABLE IF NOT EXISTS d1_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL)`),
     db.prepare(`CREATE TABLE IF NOT EXISTS app_secrets (key TEXT PRIMARY KEY, value TEXT NOT NULL, created_at INTEGER NOT NULL)`),

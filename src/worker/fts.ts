@@ -76,11 +76,11 @@ export async function backfillFts(db: D1Database, batchSize = BATCH): Promise<{ 
 /** If FTS indexes are empty but mail exists (post-migration), page-fill them. Safe to call repeatedly. */
 export async function maybeBackfillFts(db: D1Database): Promise<void> {
   try {
-    const fts = await db.prepare(`SELECT COUNT(*) AS n FROM threads_fts`).first<{ n: number }>();
-    if ((fts?.n ?? 0) > 0) return;
-    const threads = await db.prepare(`SELECT COUNT(*) AS n FROM threads`).first<{ n: number }>();
-    const messages = await db.prepare(`SELECT COUNT(*) AS n FROM messages`).first<{ n: number }>();
-    if ((threads?.n ?? 0) === 0 && (messages?.n ?? 0) === 0) return;
+    const fts = await db.prepare(`SELECT 1 AS x FROM threads_fts LIMIT 1`).first<{ x: number }>();
+    if (fts !== null) return;
+    const threads = await db.prepare(`SELECT 1 AS x FROM threads LIMIT 1`).first<{ x: number }>();
+    const messages = await db.prepare(`SELECT 1 AS x FROM messages LIMIT 1`).first<{ x: number }>();
+    if (threads === null && messages === null) return;
     await backfillFts(db);
   } catch {
     /* FTS tables may not exist yet on early boot */
