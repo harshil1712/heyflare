@@ -26,6 +26,7 @@ import m0021 from "../../migrations/0021_r2_retention.sql";
 import m0022 from "../../migrations/0022_device_tokens.sql";
 import m0023 from "../../migrations/0023_counts.sql";
 import m0024 from "../../migrations/0024_counts_backfill.sql";
+import m0025 from "../../migrations/0025_remove_non_mail_features.sql";
 import { maybeBackfillFts } from "./fts";
 
 export const MIGRATIONS: { name: string; sql: string }[] = [
@@ -53,6 +54,7 @@ export const MIGRATIONS: { name: string; sql: string }[] = [
   { name: "0022_device_tokens.sql", sql: m0022 },
   { name: "0023_counts.sql", sql: m0023 },
   { name: "0024_counts_backfill.sql", sql: m0024 },
+  { name: "0025_remove_non_mail_features.sql", sql: m0025 },
 ];
 
 const LATEST_MIGRATION = MIGRATIONS[MIGRATIONS.length - 1]!.name;
