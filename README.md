@@ -29,7 +29,7 @@ mobile app UI, no external services beyond Google's APIs and Cloudflare.
 - **Reply Later, Set Aside, Bubble Up** — trays docked in the Imbox, Focus & Reply mode, snooze with presets.
 - **Bundles** — collapse a chatty sender into one row per batch; read the batch like a feed.
 - **Unified inbox** across every connected account, with per-account glyphs and a From picker in compose.
-- **Gmail** via OAuth (incremental history sync every minute plus sync-on-focus; sending through Gmail).
+- **Gmail** via OAuth (incremental history sync pushed by Pub/Sub plus sync-on-focus; sending through Gmail).
 - **Custom domain mailboxes** — inbound through Cloudflare Email Routing, outbound through Cloudflare Email Sending or Resend.
 - Contacts with Google profile photos, BIMI brand logos, address-book autocomplete, labels, files,
   notes, merge and rename threads, spy-pixel blocking, keyboard shortcuts, command palette, dark mode, two-factor auth.
@@ -117,7 +117,7 @@ new database migrations apply themselves on the first request after a deploy. Fu
 ## How mail flows
 - Connecting Gmail imports **nothing**. It records Gmail's history cursor and only mail that arrives afterwards syncs.
 - Every first-time sender waits in the **Screener**. Decisions are per person and apply across all your accounts.
-- Gmail is polled every minute (Cloudflare cron) and whenever the app is opened or regains focus (throttled). Custom-domain
+- Gmail pushes in near-realtime through Pub/Sub; the app also wakes stale accounts when it is opened (throttled via /counts). Custom-domain
   mail is pushed in instantly by Email Routing.
 - Sending uses your Gmail account (it appears in Gmail's Sent too), with undo-send and send-later.
 - Contact photos come from the People API (profile + directory) and BIMI logos from DNS; otherwise initials.
@@ -166,14 +166,14 @@ Mail search uses D1 **FTS5** (trigram tokenizer) with `bm25` ranking; queries sh
 
 ### Gmail Pub/Sub (near-realtime sync)
 
-Primary mail ingest is **Gmail `users.watch` → Cloud Pub/Sub → `POST /pubsub/push`**, coordinated by a per-account `SyncActor` Durable Object (cron only renews watches and catches missed pushes).
+Primary mail ingest is **Gmail `users.watch` → Cloud Pub/Sub → `POST /pubsub/push`**, coordinated by a per-account `SyncActor` Durable Object. Watch renewal is a SyncActor alarm, missed pushes are caught on app activity, and one daily cron covers the backstops and the retention sweep.
 
 1. In Google Cloud: enable the Gmail API + Pub/Sub API; create a topic (e.g. `heyflare-mail`); grant `gmail-api-push@system.gserviceaccount.com` permission to publish to it.
 2. Create a **push** subscription to `https://YOUR_HOST/pubsub/push?token=YOUR_SECRET`.
 3. Set Worker secrets / `.dev.vars`:
    - `PUBSUB_VERIFICATION_TOKEN` — same secret as `?token=`
    - `GMAIL_PUBSUB_TOPIC` — `projects/YOUR_PROJECT/topics/heyflare-mail`
-4. Reconnect Gmail (or wait for the hourly-ish watch renewal) so `users.watch` is registered.
+4. Reconnect Gmail (or wait for the daily sweep) so `users.watch` is registered.
 
 ### MCP (agent access)
 
@@ -203,7 +203,7 @@ The **0.95** cutoff is an initial policy based on the small public benchmark, no
 
 ### Attachments (R2) and retention
 
-Domain-mail attachment blobs larger than **900 KB** are stored in the `ATTACHMENTS` R2 bucket (`wrangler.jsonc`); D1 keeps an `attachments.r2_key` pointer. Older large blobs still in D1 are **copied to R2 on first read**. Settings → Mail controls Paper Trail / Trash retention (days; `0` = keep forever); cron sweeps eligible threads.
+Domain-mail attachment blobs larger than **900 KB** are stored in the `ATTACHMENTS` R2 bucket (`wrangler.jsonc`); D1 keeps an `attachments.r2_key` pointer. Older large blobs still in D1 are **copied to R2 on first read**. Settings → Mail controls Paper Trail / Trash retention (days; `0` = keep forever); a daily cron sweeps eligible threads.
 
 **Honest D1 note:** deleting rows does **not** shrink the D1 database file. Time Travel can recover recent state; a full rebuild/export is the nuclear option if you need a smaller DB.
 

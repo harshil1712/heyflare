@@ -1,4 +1,6 @@
 import { Hono } from "hono";
+import { scheduleTimer } from "../timers";
+import { wakeSyncActor } from "../sync-actor";
 import type { AppEnv, Env } from "../env";
 import type { AttachmentRow, MessageRow, ThreadRow } from "../db";
 import { applyBundleFlag } from "./screener";
@@ -48,7 +50,26 @@ function scope(c: any, alias = "t"): { sql: string; params: string[] } {
 // Maintained by triggers (migrations 0023/0024): two O(#accounts) counter reads instead of six
 // COUNT(...) statements that scan growing thread/bundle ranges.
 mail.get("/counts", async (c) => {
-  const counts = await getCounts(c.env.DB, c.get("accountIds") ?? []);
+  const db = c.env.DB;
+  // Missed-push catch-up: while the app is open it polls /counts every 2 min, so stale accounts get
+  // woken here instead of by a cron. waitUntil: never delays or fails the response.
+  c.executionCtx.waitUntil(
+    (async () => {
+      try {
+        const stale = await db
+          .prepare(
+            `SELECT id FROM accounts WHERE user_id = ? AND provider = 'gmail' AND refresh_token IS NOT NULL
+             AND sync_status = 'idle' AND initial_sync_done = 1 AND COALESCE(last_synced_at, 0) < ? LIMIT 5`
+          )
+          .bind(c.get("user").id, now() - 15 * 60_000)
+          .all<{ id: string }>();
+        for (const row of stale.results) await wakeSyncActor(c.env, row.id, "app-open");
+      } catch (e) {
+        console.error("counts stale wake failed", e);
+      }
+    })()
+  );
+  const counts = await getCounts(db, c.get("accountIds") ?? []);
   return c.json(counts);
 });
 
@@ -465,6 +486,7 @@ export async function applyAction(ops: MailOps, threadId: string, body: ActionBo
       const at = body.at == null ? null : Number(body.at);
       if (at != null && (!Number.isFinite(at) || at <= t)) return { error: "invalid_time", status: 400 };
       await upd(`bubble_up_at = ?, bubbled = 0`, at);
+      if (at != null) await scheduleTimer(ops.env, { kind: "bubble_up", threadId, at });
       return { ok: true };
     }
     case "move": {

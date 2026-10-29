@@ -13,6 +13,12 @@ export interface WakeResult {
   runs?: number;
 }
 
+/** The DO's single alarm serves both error backoff and Gmail watch renewal: earliest wins. */
+export function nextAlarmAt(backoffAt?: number, watchRenewAt?: number): number | null {
+  const times = [backoffAt, watchRenewAt].filter((t): t is number => typeof t === "number");
+  return times.length ? Math.min(...times) : null;
+}
+
 export class SyncActor extends DurableObject<Env> {
   /** In-memory OAuth access token (lost on eviction — cold wake refreshes). */
   private cachedToken: string | null = null;
@@ -23,6 +29,22 @@ export class SyncActor extends DurableObject<Env> {
   private running = false;
   /** Observability: how many syncAccount calls this isolate has started. */
   private runCount = 0;
+
+  private async rearm(): Promise<void> {
+    const [backoffAt, watchRenewAt] = await Promise.all([
+      this.ctx.storage.get<number>("backoffAt"),
+      this.ctx.storage.get<number>("watchRenewAt"),
+    ]);
+    const at = nextAlarmAt(backoffAt, watchRenewAt);
+    if (at == null) await this.ctx.storage.deleteAlarm();
+    else await this.ctx.storage.setAlarm(at);
+  }
+
+  /** Arm the watch-renewal alarm (called by ensureGmailWatch after every successful renewal). */
+  async setWatchRenewal(at: number): Promise<void> {
+    await this.ctx.storage.put("watchRenewAt", at);
+    await this.rearm();
+  }
 
   /**
    * Enqueue a sync. Concurrent wakes within the debounce window collapse to one run
@@ -109,13 +131,32 @@ export class SyncActor extends DurableObject<Env> {
     const r = await syncAccount(this.env, fresh);
     if (r.status === "error") {
       const backoff = Math.min(30 * 60_000, 5_000 * Math.max(1, this.runCount));
-      await this.ctx.storage.setAlarm(Date.now() + backoff);
+      await this.ctx.storage.put("backoffAt", Date.now() + backoff);
+      await this.rearm();
     }
     return r.added;
   }
 
   async alarm(): Promise<void> {
-    await this.wake("alarm-backoff");
+    const at = Date.now();
+    const watchRenewAt = await this.ctx.storage.get<number>("watchRenewAt");
+    if (watchRenewAt != null && watchRenewAt <= at) {
+      await this.ctx.storage.delete("watchRenewAt");
+      const accountId = this.ctx.id.name;
+      const account = accountId ? await this.env.DB.prepare(`SELECT * FROM accounts WHERE id = ?`).bind(accountId).first<AccountRow>() : null;
+      if (account && account.sync_status !== "disconnected") {
+        // Lazy: pubsub.ts already imports this module (wakeSyncActor).
+        const { renewGmailWatch } = await import("./pubsub");
+        const r = await renewGmailWatch(this.env, account);
+        if (r.ok && r.expiration) await this.ctx.storage.put("watchRenewAt", r.expiration - 24 * 3600_000);
+      }
+    }
+    const backoffAt = await this.ctx.storage.get<number>("backoffAt");
+    if (backoffAt != null && backoffAt <= at) {
+      await this.ctx.storage.delete("backoffAt");
+      await this.wake("alarm-backoff");
+    }
+    await this.rearm();
   }
 }
 

@@ -779,6 +779,17 @@ export async function syncAccount(env: Env, account: AccountRow): Promise<{ adde
   }
 }
 
+/**
+ * Fire one thread's bubble-up. The `bubble_up_at = ?` guard makes cancelled or rescheduled
+ * timer instances no-ops when they finally fire.
+ */
+export async function fireBubbleUp(db: D1Database, threadId: string, at: number): Promise<void> {
+  await db
+    .prepare(`UPDATE threads SET bubbled = 1, bubble_up_at = NULL, seen = 0, unread = 1, updated_at = ? WHERE id = ? AND bubble_up_at = ?`)
+    .bind(now(), threadId, at)
+    .run();
+}
+
 export async function processBubbleUps(db: D1Database): Promise<number> {
   const t = now();
   const r = await db

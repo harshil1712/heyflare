@@ -23,6 +23,7 @@ import pushRoutes from "./routes/push";
 import { handleMcpRequest } from "./mcp";
 
 export { SyncActor } from "./sync-actor";
+export { TimerWorkflow } from "./timers";
 
 const app = new Hono<AppEnv>();
 
@@ -83,19 +84,9 @@ app.all("*", async (c) => {
 });
 
 // ── Cron dispatch ─────────────────────────────────────────────────────────────────────────────
-// Two registered triggers (see wrangler.jsonc): "* * * * *" and "*/15 * * * *". The minute tick runs
-// only time-precision work; everything tolerant of a coarser cadence runs every 15 minutes. This cuts
-// the idle D1 query baseline roughly in half without touching any subsystem's own logic.
-
-const QUARTER_HOUR_CRON = "*/15 * * * *";
-
-/**
- * True when a cron event should run the minute-precision set. Only the exact quarter-hour pattern
- * gets the slow cadence; unknown patterns default to the minute set (safe side).
- */
-export function shouldRunMinute(cron: string): boolean {
-  return cron.trim() !== QUARTER_HOUR_CRON;
-}
+// One daily trigger ("0 4 * * *", wrangler.jsonc): retention plus backstops. Scheduled sends and
+// bubble-ups fire as Workflow timers; Gmail watch renewal is a SyncActor alarm; missed Pub/Sub
+// pushes are caught on app activity (GET /counts). The sweep re-arms any alarms missed on deploy.
 
 /** The cron subsystems, injectable so tests can spy on the dispatch. */
 export interface CronSubsystems {
@@ -113,26 +104,22 @@ export const cronSubsystems: CronSubsystems = {
   retention: (env) => import("./blobs").then((m) => m.sweepRetention(env)),
 };
 
-export async function runCron(env: Env, cron: string, systems: CronSubsystems = cronSubsystems) {
-  const db = env.DB;
-  if (shouldRunMinute(cron)) {
-    try {
-      await systems.bubbleUps(db);
-    } catch (e) {
-      console.error("bubble up failed", e);
-    }
-    try {
-      await systems.scheduledSends(env);
-    } catch (e) {
-      console.error("scheduled sends failed", e);
-    }
-    // Pub/Sub is the primary ingest path; cron only renews watches and catches missed pushes.
-    try {
-      await systems.watchSweep(env);
-    } catch (e) {
-      console.error("gmail watch sweep failed", e);
-    }
-    return;
+/** Daily run: backstops for the event-driven timers/alarms, plus the retention sweep. */
+export async function runCron(env: Env, systems: CronSubsystems = cronSubsystems) {
+  try {
+    await systems.scheduledSends(env);
+  } catch (e) {
+    console.error("scheduled sends failed", e);
+  }
+  try {
+    await systems.bubbleUps(env.DB);
+  } catch (e) {
+    console.error("bubble up failed", e);
+  }
+  try {
+    await systems.watchSweep(env);
+  } catch (e) {
+    console.error("gmail watch sweep failed", e);
   }
   try {
     await systems.retention(env);
@@ -155,7 +142,7 @@ export default {
     return app.fetch(request, env, ctx);
   },
   scheduled: (event: ScheduledEvent, env: Env, ctx: ExecutionContext) => {
-    ctx.waitUntil(ensureMigrations(env).then(() => runCron(env, event.cron)));
+    ctx.waitUntil(ensureMigrations(env).then(() => runCron(env)));
   },
   // Cloudflare Email Routing → custom-domain mailboxes.
   email: async (message: ForwardableEmailMessage, env: Env, _ctx: ExecutionContext) => {

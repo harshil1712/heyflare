@@ -61,7 +61,7 @@ Account-scoped routes take the account via `X-Account-Id` header (web stores the
 
 ## Compose (account-scoped)
 - `GET /api/drafts` -> Draft[]; `POST /api/drafts` {...} -> Draft; `PATCH /api/drafts/:id`; `DELETE /api/drafts/:id`
-- `POST /api/send` {draft_id?, thread_id?, reply_to_message_id?, to, cc, bcc, subject, body_html, send_at?, attachments?: [{filename, mime_type, data_base64}]} -> {ok, thread_id, message_id}. If `send_at` in the future -> stored as scheduled draft (cron sends). Reply threads: sets In-Reply-To/References, Gmail threadId. Sent message gets ingested into local DB immediately. Recipients get contact.screen_status='imbox' if pending (HEY auto-approves people you write to).
+- `POST /api/send` {draft_id?, thread_id?, reply_to_message_id?, to, cc, bcc, subject, body_html, send_at?, attachments?: [{filename, mime_type, data_base64}]} -> {ok, thread_id, message_id}. If `send_at` in the future -> stored as scheduled draft (a Workflow timer sends; daily cron is the backstop). Reply threads: sets In-Reply-To/References, Gmail threadId. Sent message gets ingested into local DB immediately. Recipients get contact.screen_status='imbox' if pending (HEY auto-approves people you write to).
 - `POST /api/send/cancel` {draft_id} -> cancel a scheduled send.
 
 ## Admin (superadmin only)
@@ -76,7 +76,7 @@ Account-scoped routes take the account via `X-Account-Id` header (web stores the
 - `POST /api/admin/accounts/:id/resync` -> reset history and resync
 
 ## Cron (worker `scheduled`)
-- Every 2 min: for each account: incremental sync via Gmail history API (or continue initial sync in chunks of ~100 messages using Gmail batch endpoint). Also: bubble_up (bubble_up_at <= now -> bubbled=1, bubble_up_at=null, seen=0, unread=1), scheduled sends (drafts.status='scheduled' & send_at<=now).
+- One daily tick ("0 4 * * *") runs the backstops and the retention sweep: scheduled sends (normally sent by per-draft Workflow timers on the TIMERS binding), bubble-ups (same — `fireBubbleUp`), `sweepGmailWatches` (renews watches expiring within 48h and wakes stale accounts), `sweepRetention`. Gmail watch renewal itself is a SyncActor alarm; missed Pub/Sub pushes are caught by `GET /api/counts` while the app is open.
 
 ## Implementation notes / deviations (backend)
 - `GET /api/me` also returns `google_configured: boolean` (whether Google OAuth secrets are set).
@@ -144,7 +144,7 @@ Without `CF_API_TOKEN`, domain setup is "manual": the API returns the exact step
 - `POST /api/accounts/:id/reset` -> `{ ok, account, sync_error }`. "Start fresh": deletes everything synced for the account
   (threads, messages, attachments + blobs, contacts/screener decisions, drafts, labels, sync log) and resets
   sync state; for Gmail it immediately records the current historyId so only mail arriving from now on is synced. Nothing in
-  Gmail changes. `sync_error` is set when that first sync failed (it is retried by the cron).
+  Gmail changes. `sync_error` is set when that first sync failed (it is retried by the next sync wake).
 - Connecting a Gmail account no longer imports history: the first sync just records Gmail's historyId ("start from now"), and
   every sender is screened when their first new mail arrives.
 

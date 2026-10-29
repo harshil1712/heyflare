@@ -239,6 +239,43 @@ async function sendFromDomainMailbox(env: Env, account: AccountRow, p: SendParam
   return { thread_id: localThreadId, message_id: row?.id ?? "" };
 }
 
+/**
+ * Send one scheduled draft. Claims the row first (`scheduled` → `sending`, guarded on the exact
+ * `send_at`), so a rescheduled, cancelled or already-sent call is a no-op — Workflow retries and the
+ * daily backstop can never double-send. Send failures mark the draft 'failed'; they do not throw.
+ */
+export async function sendScheduledDraft(env: Env, draftId: string, expectedSendAt: number): Promise<"sent" | "failed" | "stale"> {
+  const db = env.DB;
+  const claimed = await db
+    .prepare(`UPDATE drafts SET status = 'sending', updated_at = ? WHERE id = ? AND status = 'scheduled' AND send_at = ?`)
+    .bind(now(), draftId, expectedSendAt)
+    .run();
+  if (!claimed.meta.changes) return "stale";
+  const d = await db.prepare(`SELECT * FROM drafts WHERE id = ?`).bind(draftId).first<any>();
+  const account = d ? await db.prepare(`SELECT * FROM accounts WHERE id = ?`).bind(d.account_id).first<AccountRow>() : null;
+  if (!d || !account) return "stale";
+  try {
+    await sendMail(env, account, {
+      thread_id: d.thread_id,
+      reply_to_message_id: d.reply_to_message_id,
+      to: safeJson<Address[]>(d.to_json, []),
+      cc: safeJson<Address[]>(d.cc_json, []),
+      bcc: safeJson<Address[]>(d.bcc_json, []),
+      subject: d.subject,
+      body_html: d.body_html,
+    });
+    await db.prepare(`DELETE FROM drafts WHERE id = ?`).bind(draftId).run();
+    return "sent";
+  } catch (e) {
+    await db
+      .prepare(`UPDATE drafts SET status = 'failed', error = ?, updated_at = ? WHERE id = ?`)
+      .bind(((e as Error).message ?? "send failed").slice(0, 1000), now(), draftId)
+      .run();
+    return "failed";
+  }
+}
+
+/** Daily backstop for sends whose Workflow timer didn't fire (or couldn't be created). */
 export async function processScheduledSends(env: Env): Promise<number> {
   const db = env.DB;
   const t = now();
@@ -248,28 +285,7 @@ export async function processScheduledSends(env: Env): Promise<number> {
     .all<any>();
   let sent = 0;
   for (const d of due.results) {
-    const claimed = await db.prepare(`UPDATE drafts SET status = 'sending', updated_at = ? WHERE id = ? AND status = 'scheduled'`).bind(t, d.id).run();
-    if (!claimed.meta.changes) continue;
-    const account = await db.prepare(`SELECT * FROM accounts WHERE id = ?`).bind(d.account_id).first<AccountRow>();
-    if (!account) continue;
-    try {
-      await sendMail(env, account, {
-        thread_id: d.thread_id,
-        reply_to_message_id: d.reply_to_message_id,
-        to: safeJson<Address[]>(d.to_json, []),
-        cc: safeJson<Address[]>(d.cc_json, []),
-        bcc: safeJson<Address[]>(d.bcc_json, []),
-        subject: d.subject,
-        body_html: d.body_html,
-      });
-      await db.prepare(`DELETE FROM drafts WHERE id = ?`).bind(d.id).run();
-      sent++;
-    } catch (e) {
-      await db
-        .prepare(`UPDATE drafts SET status = 'failed', error = ?, updated_at = ? WHERE id = ?`)
-        .bind(((e as Error).message ?? "send failed").slice(0, 1000), now(), d.id)
-        .run();
-    }
+    if ((await sendScheduledDraft(env, d.id, d.send_at)) === "sent") sent++;
   }
   return sent;
 }

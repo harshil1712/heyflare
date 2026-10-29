@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { scheduleTimer } from "../timers";
 import type { AppEnv } from "../env";
 import { uid, now, safeJson, inClause, ownedRow, ownedAccount, accountForThread } from "../db";
 import type { AccountRow } from "../db";
@@ -155,6 +156,7 @@ compose.post("/send", async (c) => {
       )
       .bind(id, acc.id, b.thread_id ?? null, b.reply_to_message_id ?? null, JSON.stringify(to), JSON.stringify(cc), JSON.stringify(bcc), subject, body_html, sendAt, t, t)
       .run();
+    await scheduleTimer(c.env, { kind: "send", draftId: id, at: sendAt });
     return c.json({ ok: true, scheduled: true, draft_id: id, send_at: sendAt, account_id: acc.id });
   }
 

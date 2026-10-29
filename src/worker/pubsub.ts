@@ -41,8 +41,8 @@ export function pubsubAuthorized(env: Env, request: Request): boolean {
   return false;
 }
 
-/** Start or renew Gmail users.watch for push notifications. No-op when topic not configured. */
-export async function ensureGmailWatch(env: Env, account: AccountRow): Promise<{ ok: boolean; expiration?: number; error?: string }> {
+/** Call Gmail users.watch and record the new expiration. No-op when topic not configured. */
+export async function renewGmailWatch(env: Env, account: AccountRow): Promise<{ ok: boolean; expiration?: number; error?: string }> {
   const topic = env.GMAIL_PUBSUB_TOPIC;
   if (!topic || account.provider !== "gmail" || !hasMailScope(account.scopes)) {
     return { ok: false, error: "watch_unconfigured" };
@@ -65,7 +65,16 @@ export async function ensureGmailWatch(env: Env, account: AccountRow): Promise<{
   }
 }
 
-/** Cron sweeper: renew watches expiring within 24h; wake stale accounts that may have missed pushes. */
+/** Renew the watch and arm the SyncActor alarm for 24h before it expires. */
+export async function ensureGmailWatch(env: Env, account: AccountRow): Promise<{ ok: boolean; expiration?: number; error?: string }> {
+  const r = await renewGmailWatch(env, account);
+  if (r.ok && r.expiration) {
+    await env.SYNC_ACTOR?.getByName(account.id).setWatchRenewal(r.expiration - 24 * 3600_000);
+  }
+  return r;
+}
+
+/** Daily sweeper (backstop): renew watches expiring within 48h; wake stale accounts that may have missed pushes. */
 export async function sweepGmailWatches(env: Env): Promise<{ renewed: number; woke: number }> {
   const db = env.DB;
   const t = now();
@@ -77,7 +86,7 @@ export async function sweepGmailWatches(env: Env): Promise<{ renewed: number; wo
         `SELECT * FROM accounts WHERE provider = 'gmail' AND refresh_token IS NOT NULL AND sync_status <> 'disconnected'
          AND (gmail_watch_expiration IS NULL OR gmail_watch_expiration < ?) LIMIT 20`
       )
-      .bind(t + 24 * 3600_000)
+      .bind(t + 48 * 3600_000)
       .all<AccountRow>();
     for (const acc of due.results) {
       if (!hasMailScope(acc.scopes)) continue;
