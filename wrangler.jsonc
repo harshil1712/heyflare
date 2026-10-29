@@ -1,7 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   // Template config used by the "Deploy to Cloudflare" button and by `npm run deploy`.
-  // Cloudflare fills in the D1 database id when it provisions the database. For a manual setup, copy this file to
+  // No D1 database_id: wrangler reuses the Worker's existing DB binding, or finds/creates "heyflare-db" by name. For a manual setup, copy this file to
   // wrangler.local.jsonc, set your own ids/hostname there, and deploy with `npm run deploy:mine`.
   "name": "heyflare",
   "main": "src/worker/index.ts",
@@ -16,7 +16,7 @@
     "run_worker_first": ["/api/*", "/auth/*", "/pubsub/*", "/mcp", "/mcp/*", "/agents", "/agents/*"]
   },
   "d1_databases": [
-    { "binding": "DB", "database_name": "heyflare-db", "database_id": "00000000-0000-0000-0000-000000000000", "migrations_dir": "migrations" }
+    { "binding": "DB", "database_name": "heyflare-db", "migrations_dir": "migrations" }
   ],
   "r2_buckets": [
     { "binding": "ATTACHMENTS", "bucket_name": "heyflare-attachments" }
