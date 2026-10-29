@@ -132,10 +132,22 @@ async function refreshAccessToken(env: Env, account: AccountRow): Promise<string
   return j.access_token;
 }
 
-async function markDisconnected(env: Env, account: AccountRow, reason: string) {
+/**
+ * Mark an account disconnected, once: the guard makes a second call a no-op, so exactly one
+ * "reconnect me" push goes out per transition. Notifies the owner on the transition only.
+ */
+export async function markDisconnected(env: Env, account: AccountRow, reason: string) {
   account.sync_status = "disconnected";
   account.sync_error = reason;
-  await env.DB.prepare(`UPDATE accounts SET sync_status = 'disconnected', sync_error = ? WHERE id = ?`).bind(reason, account.id).run();
+  const r = await env.DB.prepare(`UPDATE accounts SET sync_status = 'disconnected', sync_error = ? WHERE id = ? AND sync_status <> 'disconnected'`).bind(reason, account.id).run();
+  if (r.meta.changes === 1) {
+    try {
+      const { notifyDisconnected } = await import("./push");
+      await notifyDisconnected(env, account);
+    } catch (e) {
+      console.error("disconnect push failed", e);
+    }
+  }
 }
 
 export async function getAccessToken(env: Env, account: AccountRow, force = false): Promise<string> {

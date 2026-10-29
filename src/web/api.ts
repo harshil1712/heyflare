@@ -394,16 +394,6 @@ export function useMeMutations() {
 }
 
 // ---------- Sync log (owner) ----------
-export interface SyncLogRow {
-  id: number;
-  account_id: string | null;
-  level: string;
-  message: string;
-  created_at: number;
-}
-export function useAccountLogs(accountId?: string) {
-  return useQuery({ queryKey: ["logs", accountId ?? ""], queryFn: () => api.get<SyncLogRow[]>(`/api/accounts/${accountId}/logs`), enabled: !!accountId });
-}
 
 // ---------- Domains (custom domain mailboxes) ----------
 export const DOMAIN_ERRORS: Record<string, string> = {

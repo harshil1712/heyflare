@@ -72,7 +72,6 @@ Account-scoped routes take the account via `X-Account-Id` header (web stores the
 - `POST /api/admin/users/:id/reset-password` {password}
 - `GET/PATCH /api/admin/settings` {registration_open}
 - `GET /api/admin/invites` -> invites[]; `POST /api/admin/invites` -> {code}; `DELETE /api/admin/invites/:code`
-- `GET /api/admin/logs?account_id=` -> sync_log rows (latest 200)
 - `POST /api/admin/accounts/:id/resync` -> reset history and resync
 
 ## Cron (worker `scheduled`)
@@ -142,7 +141,7 @@ Without `CF_API_TOKEN`, domain setup is "manual": the API returns the exact step
 
 ## Account reset (added)
 - `POST /api/accounts/:id/reset` -> `{ ok, account, sync_error }`. "Start fresh": deletes everything synced for the account
-  (threads, messages, attachments + blobs, contacts/screener decisions, drafts, labels, sync log) and resets
+  (threads, messages, attachments + blobs, contacts/screener decisions, drafts, labels, sync state) and resets
   sync state; for Gmail it immediately records the current historyId so only mail arriving from now on is synced. Nothing in
   Gmail changes. `sync_error` is set when that first sync failed (it is retried by the next sync wake).
 - Connecting a Gmail account no longer imports history: the first sync just records Gmail's historyId ("start from now"), and

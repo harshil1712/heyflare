@@ -247,12 +247,11 @@ describe("SyncActor alarm multiplexing", () => {
 });
 
 describe("counts stale-account wake", () => {
-  async function waitForSyncLog(accountId: string, needle: string, timeoutMs = 3000): Promise<boolean> {
-    const db = testEnv().DB;
+  async function waitForRunCount(accountId: string, n: number, timeoutMs = 3000): Promise<boolean> {
+    const stub = testEnv().SYNC_ACTOR!.getByName(accountId);
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
-      const row = await db.prepare(`SELECT message FROM sync_log WHERE account_id = ? AND message LIKE ?`).bind(accountId, `%${needle}%`).first();
-      if (row) return true;
+      if ((await stub.getRunCount()) >= n) return true;
       await new Promise((r) => setTimeout(r, 50));
     }
     return false;
@@ -277,11 +276,8 @@ describe("counts stale-account wake", () => {
     const res = await SELF.fetch("http://localhost/api/counts", { headers: { cookie: `hey_session=${sid}` } });
     expect(res.status).toBe(200);
 
-    expect(await waitForSyncLog(stale.id, "SyncActor run (app-open)")).toBe(true);
-
-    const freshLog = await env.DB.prepare(`SELECT COUNT(*) AS n FROM sync_log WHERE account_id = ? AND message LIKE '%app-open%'`).bind(fresh.id).first<{ n: number }>();
-    expect(freshLog?.n).toBe(0);
-    const foreignLog = await env.DB.prepare(`SELECT COUNT(*) AS n FROM sync_log WHERE account_id = ? AND message LIKE '%app-open%'`).bind(foreign.id).first<{ n: number }>();
-    expect(foreignLog?.n).toBe(0);
+    expect(await waitForRunCount(stale.id, 1)).toBe(true);
+    expect(await env.SYNC_ACTOR!.getByName(fresh.id).getRunCount()).toBe(0);
+    expect(await env.SYNC_ACTOR!.getByName(foreign.id).getRunCount()).toBe(0);
   });
 });

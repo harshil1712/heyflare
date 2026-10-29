@@ -461,12 +461,9 @@ export async function attachAvatars(db: D1Database, summaries: ThreadSummary[]):
   return summaries;
 }
 
-export async function logSync(db: D1Database, accountId: string | null, level: "info" | "warn" | "error", message: string) {
+export async function logSync(_db: D1Database, accountId: string | null, level: "info" | "warn" | "error", message: string) {
   try {
-    await db
-      .prepare(`INSERT INTO sync_log (account_id, level, message, created_at) VALUES (?, ?, ?, ?)`)
-      .bind(accountId, level, message.slice(0, 2000), now())
-      .run();
+    console[level === "info" ? "log" : level](JSON.stringify({ src: "sync", account_id: accountId, level, message: message.slice(0, 2000) }));
   } catch {
     // ignore
   }

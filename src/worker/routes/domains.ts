@@ -243,7 +243,6 @@ export async function deleteAccountData(db: D1Database, accountId: string, opts:
     db.prepare(`DELETE FROM messages WHERE account_id = ?`).bind(accountId),
     db.prepare(`DELETE FROM threads WHERE account_id = ?`).bind(accountId),
     db.prepare(`DELETE FROM contacts WHERE account_id = ?`).bind(accountId),
-    db.prepare(`DELETE FROM sync_log WHERE account_id = ?`).bind(accountId),
     ...(opts.keepAccount
       ? []
       : [

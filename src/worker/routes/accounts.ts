@@ -104,14 +104,6 @@ accounts.post("/:id/sync-photos", async (c) => {
   }
 });
 
-// Recent sync activity for one of the owner's accounts.
-accounts.get("/:id/logs", async (c) => {
-  const acc = await ownAccount(c, c.req.param("id"));
-  if (!acc) return c.json({ error: "not_found" }, 404);
-  const rows = await c.env.DB.prepare(`SELECT id, account_id, level, message, created_at FROM sync_log WHERE account_id = ? ORDER BY created_at DESC LIMIT 200`).bind(acc.id).all();
-  return c.json(rows.results);
-});
-
 /**
  * Mints a one-time link that starts Google's consent flow in the *system browser*. The Mac app calls
  * this (it holds the session), then opens the URL outside the webview — Google increasingly refuses

@@ -195,6 +195,22 @@ export async function sendPush(
 }
 
 /**
+ * One push per subscription when a Gmail account disconnects (revoked token, missing refresh token).
+ * Called only on the 'idle' → 'disconnected' transition; opens the Accounts settings tab.
+ */
+export async function notifyDisconnected(env: Env, account: { user_id: string; email: string }): Promise<void> {
+  const subs = await listPushSubscriptions(env, account.user_id);
+  for (const sub of subs) {
+    const r = await sendPush(env, sub, {
+      title: "Gmail disconnected",
+      body: `${account.email} needs to be reconnected to keep syncing.`,
+      data: { url: "/settings/accounts" },
+    });
+    if (r === "gone") await deletePushSubscription(env, account.user_id, sub.endpoint);
+  }
+}
+
+/**
  * Unseen Imbox + Screener counts for the home-screen badge (PWA Badging API).
  * Scoped to every account the user owns. Reads the trigger-maintained counters
  * (migrations 0023/0024) instead of scanning thread/bundle ranges.

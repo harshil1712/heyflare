@@ -48,7 +48,7 @@ export class SyncActor extends DurableObject<Env> {
 
   /**
    * Enqueue a sync. Concurrent wakes within the debounce window collapse to one run
-   * (push storms → a single SyncActor run in sync_log).
+   * (push storms → a single SyncActor run in the logs).
    */
   async wake(reason = "wake"): Promise<WakeResult> {
     this.pending = true;

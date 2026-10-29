@@ -1,7 +1,7 @@
 import type { Env } from "./env";
 import type { AccountRow, ContactRow, ThreadRow } from "./db";
 import { uid, now, chunk, placeholders, safeJson, runBatch, logSync } from "./db";
-import { gmailJson, gmailBatchGet, GmailError, hasMailScope } from "./google";
+import { gmailJson, gmailBatchGet, GmailError, hasMailScope, markDisconnected } from "./google";
 import { parseGmailMessage, stripSubjectPrefixes, parseAddressList, type GmailMessage, type ParsedMessage } from "./mime";
 import { stripTrackers, htmlToText } from "./sanitize";
 import { syncContactPhotos } from "./people";
@@ -722,8 +722,12 @@ const HEARTBEAT_MS = 10 * 60_000;
 /** Sync one account: continues initial sync (up to N chunks) or does an incremental sync. Safe for cron and manual calls. */
 export async function syncAccount(env: Env, account: AccountRow): Promise<{ added: number; status: string }> {
   const db = env.DB;
+  if (account.provider !== "gmail") return { added: 0, status: "ok" };
   if (account.sync_status === "disconnected") return { added: 0, status: "disconnected" };
-  if (!account.refresh_token) return { added: 0, status: "disconnected" };
+  if (!account.refresh_token) {
+    await markDisconnected(env, account, "No refresh token; please reconnect the account.");
+    return { added: 0, status: "disconnected" };
+  }
   // An account connected for calendar only has no mail scope: every Gmail call would 403. Leave it
   // alone rather than writing a sync error every minute. (An empty `scopes` predates the column and
   // does have mail — see hasMailScope.)
@@ -770,10 +774,15 @@ export async function syncAccount(env: Env, account: AccountRow): Promise<{ adde
   } catch (e) {
     const msg = (e as Error).message ?? String(e);
     const disconnected = e instanceof GmailError && (e.status === 401 || /invalid_grant|no_refresh_token/i.test(e.body));
-    await db
-      .prepare(`UPDATE accounts SET sync_status = ?, sync_error = ?, last_synced_at = ? WHERE id = ?`)
-      .bind(disconnected ? "disconnected" : "error", msg.slice(0, 1000), now(), account.id)
-      .run();
+    if (disconnected) {
+      await markDisconnected(env, account, msg.slice(0, 1000));
+      await db.prepare(`UPDATE accounts SET last_synced_at = ? WHERE id = ?`).bind(now(), account.id).run();
+    } else {
+      await db
+        .prepare(`UPDATE accounts SET sync_status = 'error', sync_error = ?, last_synced_at = ? WHERE id = ?`)
+        .bind(msg.slice(0, 1000), now(), account.id)
+        .run();
+    }
     await logSync(db, account.id, "error", `Sync failed: ${msg}`);
     return { added, status: disconnected ? "disconnected" : "error" };
   }

@@ -27,6 +27,7 @@ import m0022 from "../../migrations/0022_device_tokens.sql";
 import m0023 from "../../migrations/0023_counts.sql";
 import m0024 from "../../migrations/0024_counts_backfill.sql";
 import m0025 from "../../migrations/0025_remove_non_mail_features.sql";
+import m0026 from "../../migrations/0026_drop_sync_log.sql";
 import { maybeBackfillFts } from "./fts";
 
 export const MIGRATIONS: { name: string; sql: string }[] = [
@@ -55,6 +56,7 @@ export const MIGRATIONS: { name: string; sql: string }[] = [
   { name: "0023_counts.sql", sql: m0023 },
   { name: "0024_counts_backfill.sql", sql: m0024 },
   { name: "0025_remove_non_mail_features.sql", sql: m0025 },
+  { name: "0026_drop_sync_log.sql", sql: m0026 },
 ];
 
 const LATEST_MIGRATION = MIGRATIONS[MIGRATIONS.length - 1]!.name;
@@ -130,11 +132,7 @@ export async function runMigrations(env: Env) {
     const stmts = splitStatements(m.sql).map((s) => db.prepare(s));
     stmts.push(db.prepare(`INSERT INTO d1_migrations (name) VALUES (?)`).bind(m.name));
     await db.batch(stmts);
-    try {
-      await db.prepare(`INSERT INTO sync_log (account_id, level, message, created_at) VALUES (NULL, 'info', ?, ?)`).bind(`Applied migration ${m.name}`, Date.now()).run();
-    } catch {
-      /* sync_log may not exist yet on very early migrations */
-    }
+    console.log(JSON.stringify({ src: "sync", account_id: null, level: "info", message: `Applied migration ${m.name}` }));
   }
   await maybeBackfillFts(db);
 }
